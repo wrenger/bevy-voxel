@@ -1,0 +1,43 @@
+{
+    "opaque": true,
+    "cubes": [
+        {
+            "min": [
+                0,
+                0,
+                0
+            ],
+            "max": [
+                16,
+                16,
+                16
+            ],
+            "faces": [
+                {
+                    "texture": "stone",
+                    "cull": "-x"
+                },
+                {
+                    "texture": "stone",
+                    "cull": "-y"
+                },
+                {
+                    "texture": "stone",
+                    "cull": "-z"
+                },
+                {
+                    "texture": "stone",
+                    "cull": "+x"
+                },
+                {
+                    "texture": "stone",
+                    "cull": "+y"
+                },
+                {
+                    "texture": "stone",
+                    "cull": "+z"
+                }
+            ]
+        }
+    ]
+}
