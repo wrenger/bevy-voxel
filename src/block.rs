@@ -1,30 +1,28 @@
 use std::ops::{Index, IndexMut};
+use std::sync::RwLock;
 
 use bevy::asset::{AssetLoader, BoxedFuture, LoadContext, LoadedAsset};
 use bevy::math::const_uvec3;
 use bevy::prelude::*;
 use bevy::reflect::TypeUuid;
 use bevy::render::mesh::{Indices, PrimitiveTopology};
-use bevy::render::once_cell::sync::OnceCell;
+use bevy::render::once_cell::sync::Lazy;
+use bevy::utils::HashMap;
 use serde::Deserialize;
 
 use crate::textures::{TextureMap, TextureMapId};
 use crate::util::Direction;
 
-#[derive(Debug, Deserialize, Clone, Copy, PartialEq, Eq, Hash)]
+/// Id of a block. This is also used by the asset server to load the blocks
+/// before storing them in a shared map.
+#[derive(Debug, Clone, Copy, TypeUuid, Deserialize, PartialEq, Eq, Hash)]
+#[uuid = "fd6772fe-c8b7-4e89-b1f8-4af6faa57627"]
 pub struct BlockId(pub u16);
 
-pub static BLOCK_HANDLES: OnceCell<Vec<Handle<Block>>> = OnceCell::new();
-
-impl BlockId {
-    pub fn handle(self) -> Handle<Block> {
-        BLOCK_HANDLES.get().expect("Blocks not initialized")[self.0 as usize].clone_weak()
-    }
-}
+pub static BLOCKS: Lazy<RwLock<HashMap<BlockId, Block>>> = Lazy::new(default);
 
 /// Block occupying a specific coordinate.
-#[derive(Debug, Clone, TypeUuid)]
-#[uuid = "fd6772fe-c8b7-4e89-b1f8-4af6faa57626"]
+#[derive(Debug, Clone)]
 pub struct Block {
     pub opaque: bool,
     pub cubes: Vec<Cube>,
@@ -149,10 +147,12 @@ pub struct Face {
     pub cull: Option<Direction>,
 }
 
-#[derive(Debug, Default, Deserialize)]
-#[serde(default)]
+#[derive(Debug, Deserialize)]
 struct BlockData {
+    id: BlockId,
+    #[serde(default)]
     cubes: Vec<CubeData>,
+    #[serde(default)]
     opaque: bool,
 }
 
@@ -227,7 +227,8 @@ impl AssetLoader for BlockLoader {
                     .collect(),
             };
 
-            load_context.set_default_asset(LoadedAsset::new(block));
+            load_context.set_default_asset(LoadedAsset::new(block_data.id));
+            BLOCKS.write().unwrap().insert(block_data.id, block);
 
             Ok(())
         })

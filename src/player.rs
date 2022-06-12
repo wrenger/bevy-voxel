@@ -1,4 +1,4 @@
-use std::f32::consts::FRAC_PI_2;
+use std::f32::consts::{FRAC_PI_2, FRAC_PI_4, PI};
 
 use bevy::input::mouse::MouseMotion;
 use bevy::prelude::*;
@@ -10,7 +10,9 @@ pub struct PlayerMovementPlugin;
 impl Plugin for PlayerMovementPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<PlayerSettings>()
-            .add_system_set(SystemSet::on_update(AppState::Running).with_system(player_movement));
+            .add_system_set(SystemSet::on_enter(AppState::Running).with_system(setup))
+            .add_system_set(SystemSet::on_update(AppState::Running).with_system(player_movement))
+            .add_system_set(SystemSet::on_update(AppState::Running).with_system(move_lights));
     }
 }
 
@@ -34,6 +36,48 @@ impl Default for PlayerSettings {
             r_speed: 0.5,
         }
     }
+}
+
+#[derive(Default, Component)]
+struct PlayerLight;
+
+fn setup(mut cmds: Commands) {
+    cmds.spawn_bundle(PerspectiveCameraBundle {
+        perspective_projection: PerspectiveProjection {
+            fov: PI / 2.0,
+            ..Default::default()
+        },
+        transform: Transform::from_xyz(0.0, 1.0, 2.0).looking_at(Vec3::ZERO, Vec3::Y),
+        ..Default::default()
+    })
+    .insert(PlayerController {
+        yaw: 0.0,
+        pitch: 0.0,
+    });
+
+    // directional 'sun' light
+    const HALF_SIZE: f32 = 64.0;
+    cmds.spawn_bundle(DirectionalLightBundle {
+        directional_light: DirectionalLight {
+            shadow_projection: OrthographicProjection {
+                left: -HALF_SIZE,
+                right: HALF_SIZE,
+                bottom: -HALF_SIZE,
+                top: HALF_SIZE,
+                near: -10.0 * HALF_SIZE,
+                far: 10.0 * HALF_SIZE,
+                ..default()
+            },
+            shadows_enabled: true,
+            ..default()
+        },
+        transform: Transform {
+            rotation: Quat::from_euler(EulerRot::YXZ, FRAC_PI_4, -FRAC_PI_4, 0.0),
+            ..default()
+        },
+        ..default()
+    })
+    .insert(PlayerLight);
 }
 
 fn player_movement(
@@ -61,32 +105,42 @@ fn player_movement(
         .reduce(|a, e| a + e)
         .unwrap_or_default();
 
-    for (mut transform, mut movement) in query.iter_mut() {
-        if mouse.pressed(MouseButton::Right) {
-            let mut new_pitch =
-                movement.pitch + rotation.y * time.delta_seconds() * settings.r_speed;
-            let new_yaw = movement.yaw + rotation.x * time.delta_seconds() * settings.r_speed;
+    let (mut transform, mut movement) = query.single_mut();
 
-            new_pitch = new_pitch.clamp(-FRAC_PI_2, FRAC_PI_2);
+    if mouse.pressed(MouseButton::Right) {
+        let mut new_pitch = movement.pitch + rotation.y * time.delta_seconds() * settings.r_speed;
+        let new_yaw = movement.yaw + rotation.x * time.delta_seconds() * settings.r_speed;
 
-            movement.pitch = new_pitch;
-            movement.yaw = new_yaw;
+        new_pitch = new_pitch.clamp(-FRAC_PI_2, FRAC_PI_2);
 
-            transform.rotation = Quat::from_axis_angle(-Vec3::Y, new_yaw)
-                * Quat::from_axis_angle(-Vec3::X, new_pitch);
-        }
+        movement.pitch = new_pitch;
+        movement.yaw = new_yaw;
 
-        let dir = Vec3::new(
-            key.pressed(KeyCode::D) as i32 as f32 - key.pressed(KeyCode::A) as i32 as f32,
-            key.pressed(KeyCode::Space) as i32 as f32 - key.pressed(KeyCode::LShift) as i32 as f32,
-            key.pressed(KeyCode::S) as i32 as f32 - key.pressed(KeyCode::W) as i32 as f32,
-        )
-        .clamp_length_max(1.0);
+        transform.rotation =
+            Quat::from_axis_angle(-Vec3::Y, new_yaw) * Quat::from_axis_angle(-Vec3::X, new_pitch);
+    }
 
-        let velocity = Quat::from_axis_angle(-Vec3::Y, movement.yaw)
-            * dir
-            * time.delta_seconds()
-            * settings.m_speed;
-        transform.translation += velocity;
+    let dir = Vec3::new(
+        key.pressed(KeyCode::D) as i32 as f32 - key.pressed(KeyCode::A) as i32 as f32,
+        key.pressed(KeyCode::Space) as i32 as f32 - key.pressed(KeyCode::LShift) as i32 as f32,
+        key.pressed(KeyCode::S) as i32 as f32 - key.pressed(KeyCode::W) as i32 as f32,
+    )
+    .clamp_length_max(1.0);
+
+    let velocity = Quat::from_axis_angle(-Vec3::Y, movement.yaw)
+        * dir
+        * time.delta_seconds()
+        * settings.m_speed;
+    transform.translation += velocity;
+}
+
+fn move_lights(
+    player: Query<&Transform, With<PlayerController>>,
+    mut lights: Query<&mut Transform, (With<PlayerLight>, Without<PlayerController>)>,
+) {
+    let pos = player.single().translation;
+    for mut light in lights.iter_mut() {
+        info!("Move light {pos:.3}");
+        light.translation = pos;
     }
 }

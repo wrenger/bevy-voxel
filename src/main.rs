@@ -6,6 +6,7 @@ use bevy::prelude::*;
 
 mod block;
 mod chunk;
+mod generation;
 mod player;
 mod textures;
 mod ui;
@@ -13,26 +14,27 @@ mod util;
 mod world;
 
 use bevy_egui::EguiPlugin;
-use block::{Block, BlockLoader, BLOCK_HANDLES};
-use player::{PlayerController, PlayerMovementPlugin};
+use block::{BlockId, BlockLoader};
+use player::PlayerMovementPlugin;
 use textures::TextureMap;
+use world::WorldPlugin;
 
-use crate::block::BlockId;
-use crate::chunk::Chunk;
+use crate::block::BLOCKS;
 
 fn main() {
     App::new()
         .init_resource::<ImageLoading>()
         .init_resource::<BlockLoading>()
-        .init_resource::<ui::BlockMat>()
+        .init_resource::<BlockMat>()
         .insert_resource(Msaa { samples: 4 })
         .add_plugins(DefaultPlugins)
         .add_plugin(FrameTimeDiagnosticsPlugin::default())
         .add_plugin(EguiPlugin)
-        .add_asset::<Block>()
+        .add_asset::<BlockId>()
         .init_asset_loader::<BlockLoader>()
         .add_state(AppState::LoadTextures)
         .add_plugin(PlayerMovementPlugin)
+        .add_plugin(WorldPlugin)
         .add_system_set(SystemSet::on_enter(AppState::LoadTextures).with_system(load_textures))
         .add_system_set(SystemSet::on_update(AppState::LoadTextures).with_system(check_textures))
         .add_system_set(SystemSet::on_exit(AppState::LoadTextures).with_system(build_textures))
@@ -98,21 +100,19 @@ fn check_blocks(
     asset_server: Res<AssetServer>,
 ) {
     if let LoadState::Loaded = asset_server.get_group_load_state(loading.0.iter().map(|h| h.id)) {
-        BLOCK_HANDLES
-            .set(loading.0.iter().cloned().map(|h| h.typed()).collect())
-            .unwrap();
-
         state.set(AppState::Running).unwrap()
     }
 }
+
+#[derive(Default)]
+pub struct BlockMat(Handle<StandardMaterial>);
 
 fn setup(
     mut cmds: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
     loading: Res<BlockLoading>,
-    blocks: Res<Assets<Block>>,
-    mut block_mat_g: ResMut<ui::BlockMat>,
+    block_ids: Res<Assets<BlockId>>,
 ) {
     let block_mat = materials.add(StandardMaterial {
         base_color_texture: Some(TextureMap::get().image()),
@@ -121,31 +121,18 @@ fn setup(
         reflectance: 0.05,
         ..Default::default()
     });
-    block_mat_g.mat = Some(block_mat.clone_weak());
+    cmds.insert_resource(BlockMat(block_mat.clone()));
 
     for (i, handle) in loading.0.iter().enumerate() {
-        let block = blocks.get(handle).unwrap();
+        let block_id = block_ids.get(handle).unwrap();
+        let blocks = BLOCKS.read().unwrap();
         cmds.spawn_bundle(PbrBundle {
-            mesh: meshes.add(block.mesh()),
+            mesh: meshes.add(blocks[&block_id].mesh()),
             material: block_mat.clone(),
             transform: Transform::from_xyz(2.0 + 2.0 * i as f32, 0.0, 0.0),
             ..default()
         });
     }
-
-    let mut chunk = Chunk::new();
-    chunk.fill(BlockId(2), UVec3::new(0, 30, 0), UVec3::new(31, 31, 31));
-    chunk.fill(BlockId(1), UVec3::new(0, 24, 0), UVec3::new(31, 30, 31));
-    chunk.fill(BlockId(3), UVec3::new(0, 8, 0), UVec3::new(31, 24, 31));
-    chunk.fill(BlockId(4), UVec3::new(0, 0, 0), UVec3::new(31, 8, 31));
-    chunk[UVec3::new(16, 31, 16)] = BlockId(5);
-
-    cmds.spawn_bundle(PbrBundle {
-        mesh: meshes.add(chunk.mesh(&blocks)),
-        material: block_mat.clone(),
-        transform: Transform::from_xyz(-16.0, -34.0, -16.0),
-        ..default()
-    });
 
     // -x
     cmds.spawn_bundle(PbrBundle {
@@ -203,43 +190,6 @@ fn setup(
     cmds.insert_resource(AmbientLight {
         color: Color::WHITE,
         brightness: 0.5,
-    });
-
-    // directional 'sun' light
-    const HALF_SIZE: f32 = 10.0;
-    cmds.spawn_bundle(DirectionalLightBundle {
-        directional_light: DirectionalLight {
-            shadow_projection: OrthographicProjection {
-                left: -HALF_SIZE,
-                right: HALF_SIZE,
-                bottom: -HALF_SIZE,
-                top: HALF_SIZE,
-                near: -10.0 * HALF_SIZE,
-                far: 10.0 * HALF_SIZE,
-                ..default()
-            },
-            shadows_enabled: true,
-            ..default()
-        },
-        transform: Transform {
-            translation: Vec3::new(0.0, 2.0, 0.0),
-            rotation: Quat::from_rotation_x(-FRAC_PI_4),
-            ..default()
-        },
-        ..default()
-    });
-
-    cmds.spawn_bundle(PerspectiveCameraBundle {
-        perspective_projection: PerspectiveProjection {
-            fov: PI / 2.0,
-            ..Default::default()
-        },
-        transform: Transform::from_xyz(0.0, 1.0, 2.0).looking_at(Vec3::ZERO, Vec3::Y),
-        ..Default::default()
-    })
-    .insert(PlayerController {
-        yaw: 0.0,
-        pitch: 0.0,
     });
 }
 

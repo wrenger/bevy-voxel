@@ -1,21 +1,12 @@
 use bevy::diagnostic::{Diagnostics, FrameTimeDiagnosticsPlugin};
 use bevy::prelude::*;
 
-use bevy_egui::{
-    egui::{
-        self,
-        plot::{Line, Plot, Value, Values},
-        Slider,
-    },
-    EguiContext,
-};
+use bevy_egui::egui::plot::{Line, Plot, Value, Values};
+use bevy_egui::egui::Slider;
+use bevy_egui::{egui, EguiContext};
 
 use crate::player::PlayerSettings;
-
-#[derive(Default)]
-pub struct BlockMat {
-    pub mat: Option<Handle<StandardMaterial>>,
-}
+use crate::BlockMat;
 
 pub fn update(
     mut egui_context: ResMut<EguiContext>,
@@ -50,10 +41,13 @@ pub fn update(
 
         ui.label("Rotation Speed:");
         ui.add(Slider::new(&mut player_settings.r_speed, 0.0..=2.0));
+
+        ui.label("View Distance:");
+        ui.add(Slider::new(&mut player_settings.view_distance, 1..=12));
     });
 
     egui::Window::new("Block Material").show(egui_context.ctx_mut(), |ui| {
-        if let Some(mat) = block_mat.mat.as_ref().and_then(|m| materials.get_mut(m)) {
+        if let Some(mat) = materials.get_mut(&block_mat.0) {
             ui.label("Metallic");
             ui.add(Slider::new(&mut mat.metallic, 0.0..=1.0));
             ui.label("Roughness");
