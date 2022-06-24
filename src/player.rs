@@ -56,7 +56,7 @@ fn setup(mut cmds: Commands) {
     });
 
     // directional 'sun' light
-    const HALF_SIZE: f32 = 64.0;
+    const HALF_SIZE: f32 = 16.0;
     cmds.spawn_bundle(DirectionalLightBundle {
         directional_light: DirectionalLight {
             shadow_projection: OrthographicProjection {
@@ -73,6 +73,19 @@ fn setup(mut cmds: Commands) {
         },
         transform: Transform {
             rotation: Quat::from_euler(EulerRot::YXZ, FRAC_PI_4, -FRAC_PI_4, 0.0),
+            ..default()
+        },
+        ..default()
+    })
+    .insert(PlayerLight);
+
+    cmds.spawn_bundle(PointLightBundle {
+        transform: Transform::from_xyz(0.0, 0.0, 0.0),
+        point_light: PointLight {
+            intensity: 1600.0, // lumens - roughly a 100W non-halogen incandescent bulb
+            color: Color::ORANGE,
+            shadows_enabled: false,
+            radius: 8.0,
             ..default()
         },
         ..default()
@@ -99,25 +112,22 @@ fn player_movement(
         window.set_cursor_lock_mode(false);
     }
 
-    let rotation = mouse_move
-        .iter()
-        .map(|m| m.delta)
-        .reduce(|a, e| a + e)
-        .unwrap_or_default();
-
     let (mut transform, mut movement) = query.single_mut();
 
     if mouse.pressed(MouseButton::Right) {
-        let mut new_pitch = movement.pitch + rotation.y * time.delta_seconds() * settings.r_speed;
-        let new_yaw = movement.yaw + rotation.x * time.delta_seconds() * settings.r_speed;
+        if let Some(rotation) = mouse_move.iter().map(|m| m.delta).reduce(|a, e| a + e) {
+            let mut new_pitch =
+                movement.pitch + rotation.y * time.delta_seconds() * settings.r_speed;
+            let new_yaw = movement.yaw + rotation.x * time.delta_seconds() * settings.r_speed;
 
-        new_pitch = new_pitch.clamp(-FRAC_PI_2, FRAC_PI_2);
+            new_pitch = new_pitch.clamp(-FRAC_PI_2, FRAC_PI_2);
 
-        movement.pitch = new_pitch;
-        movement.yaw = new_yaw;
+            movement.pitch = new_pitch;
+            movement.yaw = new_yaw;
 
-        transform.rotation =
-            Quat::from_axis_angle(-Vec3::Y, new_yaw) * Quat::from_axis_angle(-Vec3::X, new_pitch);
+            transform.rotation = Quat::from_axis_angle(-Vec3::Y, new_yaw)
+                * Quat::from_axis_angle(-Vec3::X, new_pitch);
+        }
     }
 
     let dir = Vec3::new(
@@ -127,20 +137,24 @@ fn player_movement(
     )
     .clamp_length_max(1.0);
 
-    let velocity = Quat::from_axis_angle(-Vec3::Y, movement.yaw)
-        * dir
-        * time.delta_seconds()
-        * settings.m_speed;
-    transform.translation += velocity;
+    if dir.length_squared() > f32::EPSILON {
+        let velocity = Quat::from_axis_angle(-Vec3::Y, movement.yaw)
+            * dir
+            * time.delta_seconds()
+            * settings.m_speed;
+        transform.translation += velocity;
+    }
 }
 
+// FIXME: The directional light shadows are not updated!
+// Maybe only update directional light pos when entering new chunk?
 fn move_lights(
-    player: Query<&Transform, With<PlayerController>>,
-    mut lights: Query<&mut Transform, (With<PlayerLight>, Without<PlayerController>)>,
+    player: Query<&Transform, (With<PlayerController>, Changed<GlobalTransform>)>,
+    mut lights: Query<&mut Transform,(With<PlayerLight>, Without<PlayerController>)>,
 ) {
-    let pos = player.single().translation;
-    for mut light in lights.iter_mut() {
-        info!("Move light {pos:.3}");
-        light.translation = pos;
+    if let Ok(target) = player.get_single() {
+        for mut transform in lights.iter_mut() {
+            transform.translation = target.translation;
+        }
     }
 }

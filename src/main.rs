@@ -1,4 +1,4 @@
-use std::f32::consts::{FRAC_PI_4, PI};
+use std::f32::consts::PI;
 
 use bevy::asset::LoadState;
 use bevy::diagnostic::FrameTimeDiagnosticsPlugin;
