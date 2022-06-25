@@ -2,6 +2,7 @@ use std::f32::consts::{FRAC_PI_2, FRAC_PI_4, PI};
 
 use bevy::input::mouse::MouseMotion;
 use bevy::prelude::*;
+use bevy::window::WindowMode;
 
 use crate::AppState;
 
@@ -11,6 +12,7 @@ impl Plugin for PlayerMovementPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<PlayerSettings>()
             .add_system_set(SystemSet::on_enter(AppState::Running).with_system(setup))
+            .add_system_set(SystemSet::on_update(AppState::Running).with_system(windowing))
             .add_system_set(SystemSet::on_update(AppState::Running).with_system(player_movement))
             .add_system_set(SystemSet::on_update(AppState::Running).with_system(move_lights));
     }
@@ -31,8 +33,8 @@ pub struct PlayerSettings {
 impl Default for PlayerSettings {
     fn default() -> Self {
         Self {
-            view_distance: 4,
-            m_speed: 10.0,
+            view_distance: 6,
+            m_speed: 20.0,
             r_speed: 0.5,
         }
     }
@@ -99,19 +101,8 @@ fn player_movement(
     mut mouse_move: EventReader<MouseMotion>,
     time: Res<Time>,
     settings: Res<PlayerSettings>,
-    mut windows: ResMut<Windows>,
     mut query: Query<(&mut Transform, &mut PlayerController)>,
 ) {
-    let window = windows.get_primary_mut().unwrap();
-    if mouse.just_pressed(MouseButton::Right) {
-        window.set_cursor_visibility(false);
-        window.set_cursor_lock_mode(true);
-    }
-    if mouse.just_released(MouseButton::Right) {
-        window.set_cursor_visibility(true);
-        window.set_cursor_lock_mode(false);
-    }
-
     let (mut transform, mut movement) = query.single_mut();
 
     if mouse.pressed(MouseButton::Right) {
@@ -150,11 +141,37 @@ fn player_movement(
 // Maybe only update directional light pos when entering new chunk?
 fn move_lights(
     player: Query<&Transform, (With<PlayerController>, Changed<GlobalTransform>)>,
-    mut lights: Query<&mut Transform,(With<PlayerLight>, Without<PlayerController>)>,
+    mut lights: Query<&mut Transform, (With<PlayerLight>, Without<PlayerController>)>,
 ) {
     if let Ok(target) = player.get_single() {
         for mut transform in lights.iter_mut() {
             transform.translation = target.translation;
         }
+    }
+}
+
+fn windowing(
+    key: Res<Input<KeyCode>>,
+    mouse: Res<Input<MouseButton>>,
+    mut windows: ResMut<Windows>,
+) {
+    let window = windows.get_primary_mut().unwrap();
+    if mouse.just_pressed(MouseButton::Right) {
+        window.set_cursor_visibility(false);
+        window.set_cursor_lock_mode(true);
+    }
+    if mouse.just_released(MouseButton::Right) {
+        window.set_cursor_visibility(true);
+        window.set_cursor_lock_mode(false);
+    }
+
+    if key.just_pressed(KeyCode::F11)
+        || (key.pressed(KeyCode::LAlt) && key.just_pressed(KeyCode::Return))
+    {
+        window.set_mode(if window.mode() != WindowMode::Fullscreen {
+            WindowMode::Fullscreen
+        } else {
+            WindowMode::Windowed
+        });
     }
 }

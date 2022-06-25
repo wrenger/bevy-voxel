@@ -1,47 +1,89 @@
+use std::ops::Range;
+
 use bevy::prelude::*;
-use std::f32::consts;
+use simdnoise::NoiseBuilder;
 
 use crate::block::BlockId;
 use crate::chunk::Chunk;
+use crate::util::RangeExt;
 
-const DIRT_HEIGHT: f32 = 3.0;
+const MIN_HEIGHT: f32 = -128.0;
+const MAX_HEIGHT: f32 = 128.0;
 
-const MIN_HEIGHT: f32 = -16.0;
-const MAX_HEIGHT: f32 = 0.0;
+#[derive(Debug, Clone)]
+pub struct Noise {
+    pub freq: f32,
+    pub lacunarity: f32,
+    pub gain: f32,
+    pub octaves: u8,
+    pub limits: Range<f32>,
+    pub height: Range<f32>,
+}
 
-pub fn generate_chunk(pos: IVec3) -> Chunk {
+impl Default for Noise {
+    fn default() -> Self {
+        Noise {
+            freq: 0.05,
+            lacunarity: 0.65,
+            gain: 2.0,
+            octaves: 4,
+            limits: 3.5..4.0,
+            height: MIN_HEIGHT..MAX_HEIGHT,
+        }
+    }
+}
+
+pub fn generate_chunk(pos: IVec3, noise: &Noise) -> Chunk {
     let mut chunk = Chunk::new();
-    if pos.y > (MAX_HEIGHT / Chunk::SIZE as f32).ceil() as i32 {
-    } else if pos.y < ((MIN_HEIGHT - DIRT_HEIGHT) / Chunk::SIZE as f32).floor() as i32 {
+    if pos.y > (noise.height.end / Chunk::SIZE as f32).ceil() as i32 {
+        // air
+    } else if pos.y < ((noise.height.start - 1.0) / Chunk::SIZE as f32).floor() as i32 {
+        // stone
         chunk.fill(BlockId(1), UVec3::ZERO, Chunk::MAX - 1);
     } else {
-        for x in 0..Chunk::SIZE as u32 {
-            for z in 0..Chunk::SIZE as u32 {
-                let gx = x as i32 + pos.x * Chunk::SIZE as i32;
-                let gz = z as i32 + pos.z * Chunk::SIZE as i32;
+        let b_pos = pos.as_vec3() * Chunk::SIZE as f32;
+        info!("{pos} -> {b_pos}");
+        let (base, min, max) = NoiseBuilder::ridge_3d_offset(
+            b_pos.x,
+            Chunk::SIZE as _,
+            b_pos.y,
+            Chunk::SIZE as _,
+            b_pos.z,
+            Chunk::SIZE as _,
+        )
+        .with_freq(noise.freq)
+        .with_lacunarity(noise.lacunarity)
+        .with_gain(noise.gain)
+        .with_octaves(noise.octaves)
+        .generate();
+        info!("[{min:.3}, {max:.3}]");
 
-                let h = height(gx, gz);
-
-                for y in 0..Chunk::SIZE as u32 {
+        for x in 0..Chunk::SIZE {
+            for z in 0..Chunk::SIZE {
+                for y in 0..Chunk::SIZE {
                     let gy = y as i32 + pos.y * Chunk::SIZE as i32;
-                    let p = UVec3::new(x, y, z);
-                    if gy < h - DIRT_HEIGHT as i32 {
-                        chunk[p] = BlockId(1);
-                    } else if gy < h {
-                        chunk[p] = BlockId(2);
-                    } else if gy == h {
-                        chunk[p] = BlockId(3);
+
+                    // The higher the lower the propability for stone
+                    let height = 1.0 - noise.height.lerp_inv(gy as _);
+                    let limit = noise.limits.lerp(height);
+
+                    let filled = base[x + y * Chunk::SIZE + z * Chunk::SIZE * Chunk::SIZE] < limit;
+                    if filled {
+                        chunk[UVec3::new(x as _, y as _, z as _)] = BlockId(1);
+                    } else {
+                        // Dirt and grass
+                        if y > 0 && chunk[UVec3::new(x as _, y as u32 - 1, z as _)] != BlockId(0) {
+                            chunk[UVec3::new(x as _, y as u32 - 1, z as _)] = BlockId(3);
+                            if y > 1
+                                && chunk[UVec3::new(x as _, y as u32 - 2, z as _)] != BlockId(0)
+                            {
+                                chunk[UVec3::new(x as _, y as u32 - 2, z as _)] = BlockId(2);
+                            }
+                        }
                     }
                 }
             }
         }
     }
     chunk
-}
-
-fn height(x: i32, z: i32) -> i32 {
-    let rx = (x as f32 / Chunk::SIZE as f32 * 2.0 * consts::PI).sin() / 2.0 + 1.0;
-    let rz = (z as f32 / Chunk::SIZE as f32 * 2.0 * consts::PI).sin() / 2.0 + 1.0;
-
-    (MIN_HEIGHT + (rx * rz * (MAX_HEIGHT - MIN_HEIGHT))) as i32
 }

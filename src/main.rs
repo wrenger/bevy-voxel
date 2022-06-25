@@ -15,9 +15,10 @@ mod world;
 
 use bevy_egui::EguiPlugin;
 use block::{BlockId, BlockLoader};
+use generation::Noise;
 use player::PlayerMovementPlugin;
 use textures::TextureMap;
-use world::WorldPlugin;
+use world::{RegenerateEvent, WorldPlugin};
 
 use crate::block::BLOCKS;
 
@@ -26,6 +27,8 @@ fn main() {
         .init_resource::<ImageLoading>()
         .init_resource::<BlockLoading>()
         .init_resource::<BlockMat>()
+        .init_resource::<Noise>()
+        .add_event::<RegenerateEvent>()
         .insert_resource(Msaa { samples: 4 })
         .add_plugins(DefaultPlugins)
         .add_plugin(FrameTimeDiagnosticsPlugin::default())
@@ -117,8 +120,8 @@ fn setup(
     let block_mat = materials.add(StandardMaterial {
         base_color_texture: Some(TextureMap::get().image()),
         metallic: 0.05,
-        perceptual_roughness: 0.5,
-        reflectance: 0.05,
+        perceptual_roughness: 1.0,
+        reflectance: 0.1,
         ..Default::default()
     });
     cmds.insert_resource(BlockMat(block_mat.clone()));

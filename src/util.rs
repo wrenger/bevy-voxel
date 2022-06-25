@@ -1,4 +1,4 @@
-use std::f32::consts::PI;
+use std::{f32::consts::PI, ops::Range};
 
 use bevy::math::{IVec3, Quat, Vec3};
 use serde::Deserialize;
@@ -68,5 +68,21 @@ impl From<Direction> for Quat {
             Direction::PosY => Quat::from_rotation_x(PI / 2.0),
             Direction::PosZ => Quat::from_rotation_y(PI),
         }
+    }
+}
+
+pub trait RangeExt {
+    /// Linear interpolates `t` between `start` and `end`.
+    fn lerp(&self, t: f32) -> f32;
+    /// Determines where a value lies between `start` and `end`.
+    fn lerp_inv(&self, val: f32) -> f32;
+}
+
+impl RangeExt for Range<f32> {
+    fn lerp(&self, t: f32) -> f32 {
+        self.start + (self.end - self.start) * t
+    }
+    fn lerp_inv(&self, val: f32) -> f32 {
+        ((val - self.start) / (self.end - self.start)).clamp(0.0, 1.0)
     }
 }

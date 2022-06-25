@@ -5,7 +5,7 @@ use bevy::utils::hashbrown::HashMap;
 use futures_lite::future;
 
 use crate::chunk::Chunk;
-use crate::generation::generate_chunk;
+use crate::generation::{generate_chunk, Noise};
 use crate::player::{PlayerController, PlayerSettings};
 use crate::{AppState, BlockMat};
 
@@ -26,6 +26,10 @@ impl VoxelWorld {
     pub fn world_pos(p: IVec3) -> Vec3 {
         p.as_vec3() * Chunk::SIZE as f32
     }
+
+    pub fn clear(&mut self) {
+        self.chunks.clear();
+    }
 }
 
 #[derive(Debug, Default, Clone, Copy, Component, PartialEq, Eq)]
@@ -37,6 +41,7 @@ fn init_generation(
     mut cmds: Commands,
     mut world: ResMut<VoxelWorld>,
     settings: Res<PlayerSettings>,
+    noise: Res<Noise>,
     thread_pool: Res<AsyncComputeTaskPool>,
     query: Query<&Transform, With<PlayerController>>,
 ) {
@@ -49,8 +54,9 @@ fn init_generation(
             for y in -dist..=dist {
                 let coord = center + IVec3::new(x, y, z);
                 world.chunks.entry(coord).or_insert_with(|| {
+                    let noise = noise.clone();
                     let task = thread_pool.spawn(async move {
-                        let chunk = generate_chunk(coord);
+                        let chunk = generate_chunk(coord, &noise);
                         let mesh = chunk.mesh();
                         GeneratedChunk(coord, chunk, mesh)
                     });
@@ -75,17 +81,20 @@ fn handle_generation(
             future::block_on(future::poll_once(&mut *task))
         {
             info!("drawing {coord}");
-            cmds.entity(entity)
-                .insert_bundle(PbrBundle {
-                    mesh: meshes.add(mesh),
-                    material: block_mat.0.clone(),
-                    transform: Transform::from_translation(VoxelWorld::world_pos(coord)),
-                    ..default()
-                })
-                .insert(ChunkMesh(coord))
-                .remove::<Task<GeneratedChunk>>();
             let previous = world.chunks.insert(coord, ChunkData::Visible(chunk));
-            assert!(matches!(previous, Some(ChunkData::Generating)));
+            if let Some(ChunkData::Generating) = previous {
+                cmds.entity(entity)
+                    .insert_bundle(PbrBundle {
+                        mesh: meshes.add(mesh),
+                        material: block_mat.0.clone(),
+                        transform: Transform::from_translation(VoxelWorld::world_pos(coord)),
+                        ..default()
+                    })
+                    .insert(ChunkMesh(coord))
+                    .remove::<Task<GeneratedChunk>>();
+            } else {
+                warn!("Outdated chunk: {coord}");
+            }
         }
     }
 }
@@ -115,6 +124,31 @@ fn distance(p: IVec3) -> u32 {
     p.max_element().abs().max(p.min_element().abs()) as _
 }
 
+pub struct RegenerateEvent;
+
+fn regenerate_chunks(
+    mut events: EventReader<RegenerateEvent>,
+    mut cmds: Commands,
+    mut world: ResMut<VoxelWorld>,
+    chunk_query: Query<Entity, With<ChunkMesh>>,
+    generating_query: Query<Entity, With<Task<GeneratedChunk>>>,
+) {
+    let mut regenerate = false;
+    for _ in events.iter() {
+        regenerate = true;
+    }
+    if regenerate {
+        warn!("Regenerate!");
+        for entity in chunk_query.iter() {
+            cmds.entity(entity).despawn();
+        }
+        for entity in generating_query.iter() {
+            cmds.entity(entity).despawn();
+        }
+        world.clear();
+    }
+}
+
 #[derive(Default)]
 pub struct WorldPlugin;
 
@@ -124,7 +158,8 @@ impl Plugin for WorldPlugin {
             SystemSet::on_update(AppState::Running)
                 .with_system(init_generation)
                 .with_system(handle_generation)
-                .with_system(despawn_chunks),
+                .with_system(despawn_chunks)
+                .with_system(regenerate_chunks),
         );
     }
 }
