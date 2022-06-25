@@ -24,11 +24,15 @@ pub static BLOCKS: Lazy<RwLock<HashMap<BlockId, Block>>> = Lazy::new(default);
 /// Block occupying a specific coordinate.
 #[derive(Debug, Clone)]
 pub struct Block {
+    /// If this block fills its coordinate.
+    /// Allowing adjascent faces to be culled during rendering.
     pub opaque: bool,
+    /// Cubes that define the mesh of this block.
     pub cubes: Vec<Cube>,
 }
 
 impl Block {
+    /// Generate the complete mesh for this block.
     pub fn mesh(&self) -> Mesh {
         let mut positions = Vec::with_capacity(24);
         let mut normals = Vec::with_capacity(24);
@@ -55,6 +59,7 @@ impl Block {
     }
 }
 
+/// Cubes define the mesh of a block.
 #[derive(Debug, Clone)]
 pub struct Cube {
     pub min: UVec3,
@@ -63,15 +68,16 @@ pub struct Cube {
 }
 
 impl Cube {
-    pub const MAX: UVec3 = const_uvec3!([16; 3]);
+    const MAX: UVec3 = const_uvec3!([16; 3]);
 
-    pub fn minf(&self) -> Vec3 {
+    fn minf(&self) -> Vec3 {
         self.min.as_vec3() / Self::MAX.as_vec3()
     }
-    pub fn maxf(&self) -> Vec3 {
+    fn maxf(&self) -> Vec3 {
         self.max.as_vec3() / Self::MAX.as_vec3()
     }
 
+    /// Generate the mesh for the cube.
     pub fn mesh(
         &self,
         pos: Vec3,
@@ -143,10 +149,14 @@ impl IndexMut<Direction> for Cube {
 
 #[derive(Debug, Clone)]
 pub struct Face {
+    /// Id of the face's texture.
     pub texture: TextureMapId,
+    /// If the block in the direction is occupied this face is not rendered.
     pub cull: Option<Direction>,
 }
 
+
+/// Deserializer for the block json format.
 #[derive(Debug, Deserialize)]
 struct BlockData {
     id: BlockId,
@@ -156,6 +166,7 @@ struct BlockData {
     opaque: bool,
 }
 
+/// Deserializer for the block json format.
 #[derive(Debug, Deserialize)]
 struct CubeData {
     #[serde(default)]
@@ -169,12 +180,15 @@ fn cube_max() -> UVec3 {
     Cube::MAX
 }
 
+/// Deserializer for the block json format.
 #[derive(Debug, Deserialize)]
 struct FaceData {
     texture: String,
     cull: Option<Direction>,
 }
 
+/// Loading all block assets.
+/// It requires all block textures to be fully loaded.
 #[derive(Default)]
 pub struct BlockLoader;
 

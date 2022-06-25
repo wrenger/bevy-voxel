@@ -33,6 +33,7 @@ impl Default for Noise {
     }
 }
 
+/// Generate a new chunk at this position with the given noise configuration.
 pub fn generate_chunk(pos: IVec3, noise: &Noise) -> Chunk {
     let mut chunk = Chunk::new();
     if pos.y > (noise.height.end / Chunk::SIZE as f32).ceil() as i32 {

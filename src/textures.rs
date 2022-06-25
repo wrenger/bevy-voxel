@@ -10,12 +10,14 @@ pub struct TextureMapId(usize);
 
 static MAP: OnceCell<TextureMap> = OnceCell::new();
 
+/// The combined texture atlas for all of the blocks.
 #[derive(Debug)]
 pub struct TextureMap {
     atlas: TextureAtlas,
     mapping: HashMap<String, TextureMapId>,
 }
 
+/// Error during texture atlas generation.
 #[derive(Debug)]
 struct TextureMapError;
 
@@ -28,6 +30,7 @@ impl fmt::Display for TextureMapError {
 }
 
 impl TextureMap {
+    /// Build the texture atlas of the list of texture `handles`.
     pub fn build(
         handles: &[Handle<Image>],
         asset_server: &AssetServer,
@@ -67,10 +70,12 @@ impl TextureMap {
         MAP.get().as_ref().expect("Textures not initialized")
     }
 
+    /// Return the combined texture image.
     pub fn image(&self) -> Handle<Image> {
         self.atlas.texture.clone()
     }
 
+    /// Return the uv coordinates for the given texture `id`.
     pub fn uv(&self, id: TextureMapId) -> (Vec2, Vec2) {
         assert!(id.0 < self.atlas.len());
         let rect = self.atlas.textures[id.0];
@@ -78,6 +83,7 @@ impl TextureMap {
         (rect.min / size, rect.max / size)
     }
 
+    /// Return the numerical id for the given texture `name`.
     pub fn id(&self, ident: &str) -> TextureMapId {
         self.mapping[ident]
     }

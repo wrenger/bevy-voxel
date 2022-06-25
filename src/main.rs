@@ -1,5 +1,3 @@
-use std::f32::consts::PI;
-
 use bevy::asset::LoadState;
 use bevy::diagnostic::FrameTimeDiagnosticsPlugin;
 use bevy::prelude::*;
@@ -18,7 +16,7 @@ use block::{BlockId, BlockLoader};
 use generation::Noise;
 use player::PlayerMovementPlugin;
 use textures::TextureMap;
-use world::{RegenerateEvent, WorldPlugin};
+use world::WorldPlugin;
 
 use crate::block::BLOCKS;
 
@@ -28,7 +26,6 @@ fn main() {
         .init_resource::<BlockLoading>()
         .init_resource::<BlockMat>()
         .init_resource::<Noise>()
-        .add_event::<RegenerateEvent>()
         .insert_resource(Msaa { samples: 4 })
         .add_plugins(DefaultPlugins)
         .add_plugin(FrameTimeDiagnosticsPlugin::default())
@@ -45,10 +42,10 @@ fn main() {
         .add_system_set(SystemSet::on_update(AppState::LoadBlocks).with_system(check_blocks))
         .add_system_set(SystemSet::on_enter(AppState::Running).with_system(setup))
         .add_system_set(SystemSet::on_update(AppState::Running).with_system(ui::update))
-        .add_system_set(SystemSet::on_update(AppState::Running).with_system(torque))
         .run();
 }
 
+/// The different asset loading states of the app.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 enum AppState {
     LoadTextures,
@@ -59,10 +56,12 @@ enum AppState {
 #[derive(Default)]
 struct ImageLoading(Vec<HandleUntyped>);
 
+/// Load all block textures
 fn load_textures(mut loading: ResMut<ImageLoading>, asset_server: Res<AssetServer>) {
     loading.0 = asset_server.load_folder("textures").unwrap();
 }
 
+/// Wait for the block texture loading
 fn check_textures(
     mut state: ResMut<State<AppState>>,
     loading: Res<ImageLoading>,
@@ -73,6 +72,7 @@ fn check_textures(
     }
 }
 
+/// Create the combined block texture atlas
 fn build_textures(
     mut images: ResMut<Assets<Image>>,
     loading: Res<ImageLoading>,
@@ -93,10 +93,12 @@ fn build_textures(
 #[derive(Default)]
 struct BlockLoading(Vec<HandleUntyped>);
 
+/// Load the block meshes.
 fn load_blocks(mut loading: ResMut<BlockLoading>, asset_server: Res<AssetServer>) {
     loading.0 = asset_server.load_folder("blocks").unwrap();
 }
 
+/// Wait for the block meshes.
 fn check_blocks(
     mut state: ResMut<State<AppState>>,
     loading: Res<BlockLoading>,
@@ -117,6 +119,7 @@ fn setup(
     loading: Res<BlockLoading>,
     block_ids: Res<Assets<BlockId>>,
 ) {
+    // The combined block material
     let block_mat = materials.add(StandardMaterial {
         base_color_texture: Some(TextureMap::get().image()),
         metallic: 0.05,
@@ -126,6 +129,7 @@ fn setup(
     });
     cmds.insert_resource(BlockMat(block_mat.clone()));
 
+    // Spawn all available blocks
     for (i, handle) in loading.0.iter().enumerate() {
         let block_id = block_ids.get(handle).unwrap();
         let blocks = BLOCKS.read().unwrap();
@@ -137,49 +141,52 @@ fn setup(
         });
     }
 
+    let cube_mesh = meshes.add(Mesh::from(shape::Cube { size: 0.2 }));
+
     // -x
     cmds.spawn_bundle(PbrBundle {
-        mesh: meshes.add(Mesh::from(shape::Cube { size: 0.2 })),
+        mesh: cube_mesh.clone(),
         material: materials.add(Color::rgb(0.5, 0.2, 0.2).into()),
         transform: Transform::from_xyz(-1.0, 0.0, 0.0),
         ..default()
     });
     // +x
     cmds.spawn_bundle(PbrBundle {
-        mesh: meshes.add(Mesh::from(shape::Cube { size: 0.2 })),
+        mesh: cube_mesh.clone(),
         material: materials.add(Color::rgb(1.0, 0.2, 0.2).into()),
         transform: Transform::from_xyz(1.0, 0.0, 0.0),
         ..default()
     });
     // -y
     cmds.spawn_bundle(PbrBundle {
-        mesh: meshes.add(Mesh::from(shape::Cube { size: 0.2 })),
+        mesh: cube_mesh.clone(),
         material: materials.add(Color::rgb(0.2, 0.5, 0.2).into()),
         transform: Transform::from_xyz(0.0, -1.0, 0.0),
         ..default()
     });
     // +y
     cmds.spawn_bundle(PbrBundle {
-        mesh: meshes.add(Mesh::from(shape::Cube { size: 0.2 })),
+        mesh: cube_mesh.clone(),
         material: materials.add(Color::rgb(0.2, 1.0, 0.2).into()),
         transform: Transform::from_xyz(0.0, 1.0, 0.0),
         ..default()
     });
     // -z
     cmds.spawn_bundle(PbrBundle {
-        mesh: meshes.add(Mesh::from(shape::Cube { size: 0.2 })),
+        mesh: cube_mesh.clone(),
         material: materials.add(Color::rgb(0.2, 0.2, 0.5).into()),
         transform: Transform::from_xyz(0.0, 0.0, -1.0),
         ..default()
     });
     // +z
     cmds.spawn_bundle(PbrBundle {
-        mesh: meshes.add(Mesh::from(shape::Cube { size: 0.2 })),
+        mesh: cube_mesh.clone(),
         material: materials.add(Color::rgb(0.2, 0.2, 1.0).into()),
         transform: Transform::from_xyz(0.0, 0.0, 1.0),
         ..default()
     });
 
+    // Quad displaying the generated block texture atlas
     cmds.spawn_bundle(PbrBundle {
         mesh: meshes.add(Mesh::from(shape::Quad {
             size: Vec2::new(4.0, 4.0),
@@ -194,20 +201,4 @@ fn setup(
         color: Color::WHITE,
         brightness: 0.5,
     });
-}
-
-/// Rotate a transform with the given angular speed.
-#[derive(Default, Component)]
-struct Torque {
-    speed: Vec3,
-}
-
-fn torque(time: Res<Time>, mut query: Query<(&mut Transform, &Torque)>) {
-    const FULL_TURN: f32 = 2.0 * PI;
-
-    for (mut transform, torque) in query.iter_mut() {
-        let speed = torque.speed * FULL_TURN * time.delta_seconds();
-        let rot = Quat::from_euler(EulerRot::XYZ, speed.x, speed.y, speed.z);
-        transform.rotate(rot);
-    }
 }

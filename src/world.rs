@@ -14,6 +14,7 @@ enum ChunkData {
     Visible(Chunk),
 }
 
+/// The world, consisting of smaller chunks
 #[derive(Default)]
 pub struct VoxelWorld {
     chunks: HashMap<IVec3, ChunkData>,
@@ -154,12 +155,14 @@ pub struct WorldPlugin;
 
 impl Plugin for WorldPlugin {
     fn build(&self, app: &mut App) {
-        app.init_resource::<VoxelWorld>().add_system_set(
-            SystemSet::on_update(AppState::Running)
-                .with_system(init_generation)
-                .with_system(handle_generation)
-                .with_system(despawn_chunks)
-                .with_system(regenerate_chunks),
-        );
+        app.init_resource::<VoxelWorld>()
+            .add_event::<RegenerateEvent>()
+            .add_system_set(
+                SystemSet::on_update(AppState::Running)
+                    .with_system(init_generation)
+                    .with_system(handle_generation)
+                    .with_system(despawn_chunks)
+                    .with_system(regenerate_chunks),
+            );
     }
 }

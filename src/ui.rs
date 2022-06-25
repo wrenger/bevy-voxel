@@ -10,6 +10,7 @@ use crate::player::PlayerSettings;
 use crate::world::RegenerateEvent;
 use crate::BlockMat;
 
+/// UI update function
 pub fn update(
     mut egui_context: ResMut<EguiContext>,
     diagnostics: Res<Diagnostics>,

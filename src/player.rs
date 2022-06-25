@@ -43,6 +43,7 @@ impl Default for PlayerSettings {
 #[derive(Default, Component)]
 struct PlayerLight;
 
+/// Create the player
 fn setup(mut cmds: Commands) {
     cmds.spawn_bundle(PerspectiveCameraBundle {
         perspective_projection: PerspectiveProjection {
@@ -95,6 +96,7 @@ fn setup(mut cmds: Commands) {
     .insert(PlayerLight);
 }
 
+/// Handle player movement and rotation
 fn player_movement(
     key: Res<Input<KeyCode>>,
     mouse: Res<Input<MouseButton>>,
@@ -150,6 +152,7 @@ fn move_lights(
     }
 }
 
+/// Update the window on mouse lock / fullscreen
 fn windowing(
     key: Res<Input<KeyCode>>,
     mouse: Res<Input<MouseButton>>,

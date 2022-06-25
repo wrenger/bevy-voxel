@@ -3,6 +3,7 @@ use std::{f32::consts::PI, ops::Range};
 use bevy::math::{IVec3, Quat, Vec3};
 use serde::Deserialize;
 
+/// 3d world direction.
 #[repr(usize)]
 #[derive(Debug, Deserialize, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Direction {

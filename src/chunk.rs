@@ -9,6 +9,8 @@ use bevy::utils::HashMap;
 use crate::block::{Block, BlockId, BLOCKS};
 use crate::util::Direction;
 
+/// Each chunk contains a number of blocks.
+/// A single mesh covering all the blocks is generated for every chunk.
 pub struct Chunk {
     /// They are stored in the order: Y, Z, X (in -> out)
     blocks: Box<[[[BlockId; Chunk::SIZE]; Chunk::SIZE]; Chunk::SIZE]>,
@@ -50,6 +52,8 @@ impl Chunk {
             && blocks[&self[p.as_uvec3()]].opaque
     }
 
+    /// Computes a single mesh over all blocks.
+    /// Not visible faces are excluded.
     pub fn mesh(&self) -> Mesh {
         let mut positions = Vec::with_capacity(24);
         let mut normals = Vec::with_capacity(24);
