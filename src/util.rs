@@ -22,7 +22,7 @@ pub enum Direction {
 }
 
 impl Direction {
-    pub fn all() -> [Direction; 6] {
+    pub fn all() -> [Self; 6] {
         [
             Self::NegX,
             Self::NegY,
@@ -31,6 +31,36 @@ impl Direction {
             Self::PosY,
             Self::PosZ,
         ]
+    }
+
+    pub fn from_ivec3(v: IVec3) -> Option<Self> {
+        match v {
+            _ if v.x < 0 => Some(Self::NegX),
+            _ if v.y < 0 => Some(Self::NegY),
+            _ if v.z < 0 => Some(Self::NegZ),
+            _ if v.x > 0 => Some(Self::PosX),
+            _ if v.y > 0 => Some(Self::PosY),
+            _ if v.z > 0 => Some(Self::PosZ),
+            _ => None,
+        }
+    }
+
+    pub fn ortho_vec3(self) -> (Vec3, Vec3) {
+        let rot = Quat::from(self);
+        let x = Vec3::X;
+        let y = Vec3::Y;
+        (rot * x, rot * y)
+    }
+
+    pub fn inverse(self) -> Self {
+        match self {
+            Self::NegX => Self::PosX,
+            Self::NegY => Self::PosY,
+            Self::NegZ => Self::PosZ,
+            Self::PosX => Self::NegX,
+            Self::PosY => Self::NegY,
+            Self::PosZ => Self::NegZ,
+        }
     }
 }
 
@@ -85,5 +115,38 @@ impl RangeExt for Range<f32> {
     }
     fn lerp_inv(&self, val: f32) -> f32 {
         ((val - self.start) / (self.end - self.start)).clamp(0.0, 1.0)
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use super::Direction;
+    use bevy::prelude::*;
+
+    #[test]
+    fn rotation() {
+        let back = -Vec3::Z;
+        for d in Direction::all() {
+            assert_eq!((Quat::from(d) * back).round(), Vec3::from(d));
+        }
+        let forward = Vec3::Z;
+        for d in Direction::all() {
+            assert_eq!((Quat::from(d) * forward).round(), Vec3::from(d.inverse()));
+        }
+
+        let center = (Vec3::new(32.0, 32.0, 32.0) - 1.0) / 2.0;
+        let pos = Vec3::new(4.0, 2.0, 0.0);
+        let p = Quat::from(Direction::NegZ) * (pos - center) + center;
+        assert_eq!(p.round(), pos);
+        let p = Quat::from(Direction::NegX) * (pos - center) + center;
+        assert_eq!(p.round(), Vec3::new(0.0, 2.0, 31.0 - 4.0));
+        let p = Quat::from(Direction::PosX) * (pos - center) + center;
+        assert_eq!(p.round(), Vec3::new(31.0, 2.0, 4.0));
+        let p = Quat::from(Direction::PosZ) * (pos - center) + center;
+        assert_eq!(p.round(), Vec3::new(31.0 - 4.0, 2.0, 31.0));
+        let p = Quat::from(Direction::NegY) * (pos - center) + center;
+        assert_eq!(p.round(), Vec3::new(4.0, 0.0, 31.0 - 2.0));
+        let p = Quat::from(Direction::PosY) * (pos - center) + center;
+        assert_eq!(p.round(), Vec3::new(4.0, 31.0, 2.0));
     }
 }

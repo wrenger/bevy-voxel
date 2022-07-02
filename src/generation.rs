@@ -9,6 +9,7 @@ use crate::util::RangeExt;
 
 const MIN_HEIGHT: f32 = -128.0;
 const MAX_HEIGHT: f32 = 128.0;
+const BORDER: usize = 2;
 
 #[derive(Debug, Clone)]
 pub struct Noise {
@@ -43,43 +44,54 @@ pub fn generate_chunk(pos: IVec3, noise: &Noise) -> Chunk {
         chunk.fill(BlockId(1), UVec3::ZERO, Chunk::MAX - 1);
     } else {
         let b_pos = pos.as_vec3() * Chunk::SIZE as f32;
-        info!("{pos} -> {b_pos}");
-        let (base, min, max) = NoiseBuilder::ridge_3d_offset(
-            b_pos.x,
-            Chunk::SIZE as _,
-            b_pos.y,
-            Chunk::SIZE as _,
-            b_pos.z,
-            Chunk::SIZE as _,
+        let (base, _, _) = NoiseBuilder::ridge_3d_offset(
+            b_pos.x - BORDER as f32,
+            Chunk::SIZE + 2 * BORDER,
+            b_pos.y - BORDER as f32,
+            Chunk::SIZE + 2 * BORDER,
+            b_pos.z - BORDER as f32,
+            Chunk::SIZE + 2 * BORDER,
         )
         .with_freq(noise.freq)
         .with_lacunarity(noise.lacunarity)
         .with_gain(noise.gain)
         .with_octaves(noise.octaves)
         .generate();
-        info!("[{min:.3}, {max:.3}]");
 
-        for x in 0..Chunk::SIZE {
-            for z in 0..Chunk::SIZE {
-                for y in 0..Chunk::SIZE {
-                    let gy = y as i32 + pos.y * Chunk::SIZE as i32;
+        let idx = |x: isize, y: isize, z: isize| {
+            debug_assert!(
+                x >= -(BORDER as isize)
+                    && y >= -(BORDER as isize)
+                    && z >= -(BORDER as isize)
+                    && x < (Chunk::SIZE + BORDER) as isize
+                    && y < (Chunk::SIZE + BORDER) as isize
+                    && z < (Chunk::SIZE + BORDER) as isize
+            );
+            (BORDER as isize + x) as usize
+                + (BORDER as isize + y) as usize * (Chunk::SIZE + BORDER * 2)
+                + (BORDER as isize + z) as usize
+                    * (Chunk::SIZE + BORDER * 2)
+                    * (Chunk::SIZE + BORDER * 2)
+        };
 
-                    // The higher the lower the propability for stone
-                    let height = 1.0 - noise.height.lerp_inv(gy as _);
-                    let limit = noise.limits.lerp(height);
+        for x in 0..Chunk::SIZE as isize {
+            for z in 0..Chunk::SIZE as isize {
+                for y in 0..Chunk::SIZE as isize {
+                    let propability = |y: isize| {
+                        let gy = y as i32 + pos.y * Chunk::SIZE as i32;
+                        // The higher the lower the propability for stone
+                        noise.limits.lerp(1.0 - noise.height.lerp_inv(gy as _))
+                    };
 
-                    let filled = base[x + y * Chunk::SIZE + z * Chunk::SIZE * Chunk::SIZE] < limit;
-                    if filled {
-                        chunk[UVec3::new(x as _, y as _, z as _)] = BlockId(1);
-                    } else {
+                    if base[idx(x, y, z)] < propability(y) {
                         // Dirt and grass
-                        if y > 0 && chunk[UVec3::new(x as _, y as u32 - 1, z as _)] != BlockId(0) {
-                            chunk[UVec3::new(x as _, y as u32 - 1, z as _)] = BlockId(3);
-                            if y > 1
-                                && chunk[UVec3::new(x as _, y as u32 - 2, z as _)] != BlockId(0)
-                            {
-                                chunk[UVec3::new(x as _, y as u32 - 2, z as _)] = BlockId(2);
-                            }
+                        if base[idx(x, y + 1, z)] >= propability(y + 1) {
+                            chunk[UVec3::new(x as _, y as _, z as _)] = BlockId(3);
+                        } else if base[idx(x, y + 2, z)] >= propability(y + 2) {
+                            chunk[UVec3::new(x as _, y as _, z as _)] = BlockId(2);
+                        } else {
+                            // Stone
+                            chunk[UVec3::new(x as _, y as _, z as _)] = BlockId(1);
                         }
                     }
                 }

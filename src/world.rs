@@ -1,16 +1,21 @@
+use std::mem::zeroed;
+
 use bevy::math::IVec3;
 use bevy::prelude::*;
 use bevy::tasks::{AsyncComputeTaskPool, Task};
 use bevy::utils::hashbrown::HashMap;
 use futures_lite::future;
 
-use crate::chunk::Chunk;
+use crate::block::BLOCKS;
+use crate::chunk::{Border, Chunk};
 use crate::generation::{generate_chunk, Noise};
 use crate::player::{PlayerController, PlayerSettings};
+use crate::util::Direction;
 use crate::{AppState, BlockMat};
 
 enum ChunkData {
     Generating,
+    Generated(Chunk),
     Visible(Chunk),
 }
 
@@ -22,7 +27,7 @@ pub struct VoxelWorld {
 
 impl VoxelWorld {
     pub fn chunk_pos(p: Vec3) -> IVec3 {
-        p.as_ivec3() / Chunk::SIZE as i32
+        ((p - (Chunk::SIZE as f32 / 2.0)) / Chunk::SIZE as f32).round().as_ivec3()
     }
     pub fn world_pos(p: IVec3) -> Vec3 {
         p.as_vec3() * Chunk::SIZE as f32
@@ -34,9 +39,12 @@ impl VoxelWorld {
 }
 
 #[derive(Debug, Default, Clone, Copy, Component, PartialEq, Eq)]
-struct ChunkMesh(IVec3);
+struct GeneratedChunk(IVec3);
 
-struct GeneratedChunk(IVec3, Chunk, Mesh);
+#[derive(Debug, Default, Clone, Copy, Component, PartialEq, Eq)]
+struct VisibleChunk(IVec3);
+
+struct ChunkResult(IVec3, Chunk);
 
 fn init_generation(
     mut cmds: Commands,
@@ -49,22 +57,28 @@ fn init_generation(
     let player_transform = query.single();
     let center = VoxelWorld::chunk_pos(player_transform.translation);
 
-    let dist = settings.view_distance as i32;
-    for x in -dist..=dist {
-        for z in -dist..=dist {
-            for y in -dist..=dist {
-                let coord = center + IVec3::new(x, y, z);
-                world.chunks.entry(coord).or_insert_with(|| {
-                    let noise = noise.clone();
-                    let task = thread_pool.spawn(async move {
-                        let chunk = generate_chunk(coord, &noise);
-                        let mesh = chunk.mesh();
-                        GeneratedChunk(coord, chunk, mesh)
+    let dist = settings.view_distance as i32 + 1;
+
+    for d in 0..dist {
+        for x in -dist..=dist {
+            for z in -dist..=dist {
+                for y in -dist..=dist {
+                    let off = IVec3::new(x, y, z);
+                    if distance(off) != d as u32 {
+                        continue;
+                    }
+                    let pos = center + off;
+                    world.chunks.entry(pos).or_insert_with(|| {
+                        let noise = noise.clone();
+                        let task = thread_pool.spawn(async move {
+                            let chunk = generate_chunk(pos, &noise);
+                            ChunkResult(pos, chunk)
+                        });
+                        cmds.spawn().insert(task);
+                        info!("generate {pos}");
+                        ChunkData::Generating
                     });
-                    cmds.spawn().insert(task);
-                    info!("generate {coord}");
-                    ChunkData::Generating
-                });
+                }
             }
         }
     }
@@ -73,29 +87,85 @@ fn init_generation(
 fn handle_generation(
     mut cmds: Commands,
     mut world: ResMut<VoxelWorld>,
-    mut meshes: ResMut<Assets<Mesh>>,
-    block_mat: Res<BlockMat>,
-    mut query: Query<(Entity, &mut Task<GeneratedChunk>)>,
+    mut query: Query<(Entity, &mut Task<ChunkResult>)>,
 ) {
     for (entity, mut task) in query.iter_mut() {
-        if let Some(GeneratedChunk(coord, chunk, mesh)) =
-            future::block_on(future::poll_once(&mut *task))
-        {
-            info!("drawing {coord}");
-            let previous = world.chunks.insert(coord, ChunkData::Visible(chunk));
+        if let Some(ChunkResult(pos, chunk)) = future::block_on(future::poll_once(&mut *task)) {
+            info!("generated {pos}");
+            let previous = world.chunks.insert(pos, ChunkData::Generated(chunk));
             if let Some(ChunkData::Generating) = previous {
                 cmds.entity(entity)
-                    .insert_bundle(PbrBundle {
-                        mesh: meshes.add(mesh),
-                        material: block_mat.0.clone(),
-                        transform: Transform::from_translation(VoxelWorld::world_pos(coord)),
-                        ..default()
-                    })
-                    .insert(ChunkMesh(coord))
-                    .remove::<Task<GeneratedChunk>>();
+                    .insert(GeneratedChunk(pos))
+                    .remove::<Task<ChunkResult>>();
             } else {
-                warn!("Outdated chunk: {coord}");
+                warn!("Outdated chunk: {pos}");
             }
+        }
+    }
+}
+
+fn mesh_generation(
+    mut cmds: Commands,
+    mut world: ResMut<VoxelWorld>,
+    mut meshes: ResMut<Assets<Mesh>>,
+    block_mat: Res<BlockMat>,
+    settings: Res<PlayerSettings>,
+    player_query: Query<&Transform, With<PlayerController>>,
+    query: Query<(Entity, &GeneratedChunk)>,
+) {
+    let player_transform = player_query.single();
+    let center = VoxelWorld::chunk_pos(player_transform.translation);
+    let mut sorted = query.iter().collect::<Vec<_>>();
+    sorted.sort_unstable_by_key(|(_, GeneratedChunk(p))| distance(*p - center));
+
+    let dist = settings.view_distance as u32;
+
+    'entities: for (entity, GeneratedChunk(pos)) in sorted.into_iter() {
+        if distance(center - *pos) >= dist {
+            continue;
+        }
+
+        if let Some(ChunkData::Generated(chunk)) = world.chunks.get(pos) {
+            let blocks = BLOCKS.read().unwrap();
+
+            // SAFETY: All NULL values are overwritten
+            #[allow(invalid_value)]
+            let mut neighbors: [Border; 6] = unsafe { zeroed() };
+            for d in Direction::all() {
+                match world.chunks.get(&(*pos + IVec3::from(d))) {
+                    Some(ChunkData::Visible(chunk) | ChunkData::Generated(chunk)) => {
+                        neighbors[d as usize] = chunk.border(d.inverse(), &blocks);
+                    }
+                    _ => {
+                        info!("skip drawing {pos}");
+                        continue 'entities;
+                    }
+                }
+            }
+            info!("drawing {pos}");
+
+            // takes a lot of time!
+            let mesh = chunk.mesh(neighbors);
+
+            cmds.entity(entity)
+                .insert_bundle(PbrBundle {
+                    mesh: meshes.add(mesh),
+                    material: block_mat.0.clone(),
+                    transform: Transform::from_translation(VoxelWorld::world_pos(*pos)),
+                    ..default()
+                })
+                .insert(VisibleChunk(*pos))
+                .remove::<GeneratedChunk>();
+
+            world
+                .chunks
+                .entry(*pos)
+                .and_replace_entry_with(|_, v| match v {
+                    ChunkData::Generated(v) => Some(ChunkData::Visible(v)),
+                    _ => None,
+                });
+
+            return;
         }
     }
 }
@@ -105,20 +175,29 @@ fn despawn_chunks(
     mut world: ResMut<VoxelWorld>,
     settings: Res<PlayerSettings>,
     query: Query<&Transform, With<PlayerController>>,
-    chunk_query: Query<(Entity, &ChunkMesh)>,
+    visible_query: Query<(Entity, &VisibleChunk)>,
+    generated_query: Query<(Entity, &GeneratedChunk)>,
 ) {
     let player_transform = query.single();
     let center = VoxelWorld::chunk_pos(player_transform.translation);
 
     let dist = settings.view_distance as u32;
 
-    for (entity, ChunkMesh(coord)) in chunk_query.iter() {
-        if distance(center - *coord) > dist + 1 {
-            info!("despawn {coord}");
+    visible_query.for_each(|(entity, VisibleChunk(pos))| {
+        if distance(center - *pos) > dist {
+            info!("despawn {pos}");
             cmds.entity(entity).despawn();
-            world.chunks.remove(coord);
+            world.chunks.remove(pos);
         }
-    }
+    });
+
+    generated_query.for_each(|(entity, GeneratedChunk(pos))| {
+        if distance(center - *pos) > dist + 1 {
+            info!("despawn {pos}");
+            cmds.entity(entity).despawn();
+            world.chunks.remove(pos);
+        }
+    });
 }
 
 fn distance(p: IVec3) -> u32 {
@@ -131,8 +210,9 @@ fn regenerate_chunks(
     mut events: EventReader<RegenerateEvent>,
     mut cmds: Commands,
     mut world: ResMut<VoxelWorld>,
-    chunk_query: Query<Entity, With<ChunkMesh>>,
-    generating_query: Query<Entity, With<Task<GeneratedChunk>>>,
+    chunk_query: Query<Entity, With<VisibleChunk>>,
+    visible_query: Query<Entity, With<GeneratedChunk>>,
+    generating_query: Query<Entity, With<Task<ChunkResult>>>,
 ) {
     let mut regenerate = false;
     for _ in events.iter() {
@@ -140,14 +220,23 @@ fn regenerate_chunks(
     }
     if regenerate {
         warn!("Regenerate!");
-        for entity in chunk_query.iter() {
-            cmds.entity(entity).despawn();
-        }
-        for entity in generating_query.iter() {
-            cmds.entity(entity).despawn();
-        }
+        chunk_query.for_each(|entity| cmds.entity(entity).despawn());
+        visible_query.for_each(|entity| cmds.entity(entity).despawn());
+        generating_query.for_each(|entity| cmds.entity(entity).despawn());
         world.clear();
     }
+}
+
+#[derive(Component, Default)]
+pub struct ChunkCenter;
+
+fn move_chunk_center(
+    player_query: Query<&Transform, With<PlayerController>>,
+    mut query: Query<&mut Transform, (With<ChunkCenter>, Without<PlayerController>)>,
+) {
+    let player_transform = player_query.single();
+    let center = VoxelWorld::chunk_pos(player_transform.translation);
+    query.for_each_mut(|mut t| t.translation = VoxelWorld::world_pos(center) + Chunk::MAX.as_vec3() / 2.0);
 }
 
 #[derive(Default)]
@@ -161,8 +250,10 @@ impl Plugin for WorldPlugin {
                 SystemSet::on_update(AppState::Running)
                     .with_system(init_generation)
                     .with_system(handle_generation)
+                    .with_system(mesh_generation)
                     .with_system(despawn_chunks)
-                    .with_system(regenerate_chunks),
+                    .with_system(regenerate_chunks)
+                    .with_system(move_chunk_center),
             );
     }
 }
