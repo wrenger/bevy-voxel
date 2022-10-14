@@ -2,6 +2,7 @@ use std::f32::consts::{FRAC_PI_2, FRAC_PI_4, PI};
 
 use bevy::input::mouse::MouseMotion;
 use bevy::prelude::*;
+use bevy::render::camera::Projection;
 use bevy::window::WindowMode;
 
 use crate::AppState;
@@ -45,11 +46,11 @@ struct PlayerLight;
 
 /// Create the player
 fn setup(mut cmds: Commands) {
-    cmds.spawn_bundle(PerspectiveCameraBundle {
-        perspective_projection: PerspectiveProjection {
+    cmds.spawn_bundle(Camera3dBundle {
+        projection: Projection::Perspective(PerspectiveProjection {
             fov: PI / 2.0,
             ..Default::default()
-        },
+        }),
         transform: Transform::from_xyz(0.0, 1.0, 2.0).looking_at(Vec3::ZERO, Vec3::Y),
         ..Default::default()
     })
@@ -158,7 +159,11 @@ fn windowing(
     mouse: Res<Input<MouseButton>>,
     mut windows: ResMut<Windows>,
 ) {
-    let window = windows.get_primary_mut().unwrap();
+    let window = match windows.get_primary_mut() {
+        Some(w) => w,
+        _ => return,
+    };
+
     if mouse.just_pressed(MouseButton::Right) {
         window.set_cursor_visibility(false);
         window.set_cursor_lock_mode(true);

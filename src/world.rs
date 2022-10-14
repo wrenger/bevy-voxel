@@ -27,7 +27,9 @@ pub struct VoxelWorld {
 
 impl VoxelWorld {
     pub fn chunk_pos(p: Vec3) -> IVec3 {
-        ((p - (Chunk::SIZE as f32 / 2.0)) / Chunk::SIZE as f32).round().as_ivec3()
+        ((p - (Chunk::SIZE as f32 / 2.0)) / Chunk::SIZE as f32)
+            .round()
+            .as_ivec3()
     }
     pub fn world_pos(p: IVec3) -> Vec3 {
         p.as_vec3() * Chunk::SIZE as f32
@@ -44,20 +46,22 @@ struct GeneratedChunk(IVec3);
 #[derive(Debug, Default, Clone, Copy, Component, PartialEq, Eq)]
 struct VisibleChunk(IVec3);
 
-struct ChunkResult(IVec3, Chunk);
+#[derive(Component)]
+struct ChunkResult(Task<(IVec3, Chunk)>);
 
 fn init_generation(
     mut cmds: Commands,
     mut world: ResMut<VoxelWorld>,
     settings: Res<PlayerSettings>,
     noise: Res<Noise>,
-    thread_pool: Res<AsyncComputeTaskPool>,
     query: Query<&Transform, With<PlayerController>>,
 ) {
     let player_transform = query.single();
     let center = VoxelWorld::chunk_pos(player_transform.translation);
 
     let dist = settings.view_distance as i32 + 1;
+
+    let thread_pool = AsyncComputeTaskPool::get();
 
     for d in 0..dist {
         for x in -dist..=dist {
@@ -72,9 +76,9 @@ fn init_generation(
                         let noise = noise.clone();
                         let task = thread_pool.spawn(async move {
                             let chunk = generate_chunk(pos, &noise);
-                            ChunkResult(pos, chunk)
+                            (pos, chunk)
                         });
-                        cmds.spawn().insert(task);
+                        cmds.spawn().insert(ChunkResult(task));
                         info!("generate {pos}");
                         ChunkData::Generating
                     });
@@ -87,16 +91,16 @@ fn init_generation(
 fn handle_generation(
     mut cmds: Commands,
     mut world: ResMut<VoxelWorld>,
-    mut query: Query<(Entity, &mut Task<ChunkResult>)>,
+    mut query: Query<(Entity, &mut ChunkResult)>,
 ) {
     for (entity, mut task) in query.iter_mut() {
-        if let Some(ChunkResult(pos, chunk)) = future::block_on(future::poll_once(&mut *task)) {
+        if let Some((pos, chunk)) = future::block_on(future::poll_once(&mut task.0)) {
             info!("generated {pos}");
             let previous = world.chunks.insert(pos, ChunkData::Generated(chunk));
             if let Some(ChunkData::Generating) = previous {
                 cmds.entity(entity)
                     .insert(GeneratedChunk(pos))
-                    .remove::<Task<ChunkResult>>();
+                    .remove::<ChunkResult>();
             } else {
                 warn!("Outdated chunk: {pos}");
             }
@@ -212,7 +216,7 @@ fn regenerate_chunks(
     mut world: ResMut<VoxelWorld>,
     chunk_query: Query<Entity, With<VisibleChunk>>,
     visible_query: Query<Entity, With<GeneratedChunk>>,
-    generating_query: Query<Entity, With<Task<ChunkResult>>>,
+    generating_query: Query<Entity, With<ChunkResult>>,
 ) {
     let mut regenerate = false;
     for _ in events.iter() {
@@ -236,7 +240,9 @@ fn move_chunk_center(
 ) {
     let player_transform = player_query.single();
     let center = VoxelWorld::chunk_pos(player_transform.translation);
-    query.for_each_mut(|mut t| t.translation = VoxelWorld::world_pos(center) + Chunk::MAX.as_vec3() / 2.0);
+    query.for_each_mut(|mut t| {
+        t.translation = VoxelWorld::world_pos(center) + Chunk::MAX.as_vec3() / 2.0
+    });
 }
 
 #[derive(Default)]

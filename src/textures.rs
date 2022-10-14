@@ -3,6 +3,7 @@ use std::fmt;
 
 use bevy::prelude::*;
 use bevy::render::once_cell::sync::OnceCell;
+use bevy::render::texture::ImageSampler;
 use bevy::utils::HashMap;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -39,11 +40,15 @@ impl TextureMap {
         let mut atlas = TextureAtlasBuilder::default();
 
         for handle in handles {
-            let image = images.get(handle).ok_or(TextureMapError)?;
+            let image = images.get_mut(handle).ok_or(TextureMapError)?;
             atlas.add_texture(handle.clone_weak(), image);
         }
 
         let atlas = atlas.finish(images)?;
+
+        // Texture filtering
+        let image = images.get_mut(&atlas.texture).unwrap();
+        image.sampler_descriptor = ImageSampler::nearest();
 
         let mut mapping = HashMap::new();
         for handle in handles {
@@ -77,10 +82,12 @@ impl TextureMap {
 
     /// Return the uv coordinates for the given texture `id`.
     pub fn uv(&self, id: TextureMapId) -> (Vec2, Vec2) {
+        const V2_EPS: f32 = 0.0001;
+
         assert!(id.0 < self.atlas.len());
         let rect = self.atlas.textures[id.0];
         let size = self.atlas.size;
-        (rect.min / size, rect.max / size)
+        (rect.min / size + V2_EPS, rect.max / size - V2_EPS)
     }
 
     /// Return the numerical id for the given texture `name`.

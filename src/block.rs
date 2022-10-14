@@ -2,7 +2,6 @@ use std::ops::{Index, IndexMut};
 use std::sync::RwLock;
 
 use bevy::asset::{AssetLoader, BoxedFuture, LoadContext, LoadedAsset};
-use bevy::math::const_uvec3;
 use bevy::prelude::*;
 use bevy::reflect::TypeUuid;
 use bevy::render::mesh::{Indices, PrimitiveTopology};
@@ -68,7 +67,7 @@ pub struct Cube {
 }
 
 impl Cube {
-    const MAX: UVec3 = const_uvec3!([16; 3]);
+    const MAX: UVec3 = UVec3::splat(16);
 
     fn minf(&self) -> Vec3 {
         self.min.as_vec3() / Self::MAX.as_vec3()

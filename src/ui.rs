@@ -1,7 +1,7 @@
 use bevy::diagnostic::{Diagnostics, FrameTimeDiagnosticsPlugin};
 use bevy::prelude::*;
 
-use bevy_egui::egui::plot::{Line, Plot, Value, Values};
+use bevy_egui::egui::plot::{Line, Plot, PlotPoints};
 use bevy_egui::egui::Slider;
 use bevy_egui::{egui, EguiContext};
 
@@ -27,12 +27,14 @@ pub fn update(
                 ui.label(format!("FPS: {avg:.3}"));
             }
 
-            let line = Line::new(Values::from_values_iter(fps.measurements().map(|d| {
-                Value::new(
-                    -(time.last_update().unwrap_or(time.startup()) - d.time).as_secs_f32(),
+            let measurements = fps.measurements().map(|d| {
+                [
+                    -(time.last_update().unwrap_or(time.startup()) - d.time).as_secs_f64(),
                     d.value,
-                )
-            })));
+                ]
+            });
+
+            let line = Line::new(PlotPoints::from_iter(measurements));
 
             Plot::new("fps")
                 .view_aspect(4.0)

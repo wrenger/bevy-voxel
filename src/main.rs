@@ -132,7 +132,7 @@ fn setup(
 
     // Spawn all available blocks
     for (i, handle) in loading.0.iter().enumerate() {
-        let block_id = block_ids.get(handle).unwrap();
+        let block_id = block_ids.get(&handle.typed_weak()).unwrap();
         let blocks = BLOCKS.read().unwrap();
         cmds.spawn_bundle(PbrBundle {
             mesh: meshes.add(blocks[&block_id].mesh()),

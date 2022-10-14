@@ -1,7 +1,6 @@
 use std::fmt;
 use std::ops::{Index, IndexMut};
 
-use bevy::math::const_uvec3;
 use bevy::prelude::*;
 use bevy::render::mesh::{Indices, PrimitiveTopology};
 use bevy::utils::HashMap;
@@ -18,7 +17,7 @@ pub struct Chunk {
 
 impl Chunk {
     pub const SIZE: usize = 32;
-    pub const MAX: UVec3 = const_uvec3!([Self::SIZE as u32; 3]);
+    pub const MAX: UVec3 = UVec3::splat(Self::SIZE as u32);
 
     pub fn new() -> Self {
         Self {
