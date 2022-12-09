@@ -8,7 +8,7 @@ use futures_lite::future;
 
 use crate::block::BLOCKS;
 use crate::chunk::{Border, Chunk};
-use crate::generation::{generate_chunk, Noise};
+use crate::generation::{generate_chunk, WorldGen};
 use crate::player::{PlayerController, PlayerSettings};
 use crate::util::Direction;
 use crate::{AppState, BlockMat};
@@ -20,7 +20,7 @@ enum ChunkData {
 }
 
 /// The world, consisting of smaller chunks
-#[derive(Default)]
+#[derive(Default, Resource)]
 pub struct VoxelWorld {
     chunks: HashMap<IVec3, ChunkData>,
 }
@@ -53,7 +53,7 @@ fn init_generation(
     mut cmds: Commands,
     mut world: ResMut<VoxelWorld>,
     settings: Res<PlayerSettings>,
-    noise: Res<Noise>,
+    noise: Res<WorldGen>,
     query: Query<&Transform, With<PlayerController>>,
 ) {
     let player_transform = query.single();
@@ -78,7 +78,7 @@ fn init_generation(
                             let chunk = generate_chunk(pos, &noise);
                             (pos, chunk)
                         });
-                        cmds.spawn().insert(ChunkResult(task));
+                        cmds.spawn(ChunkResult(task));
                         info!("generate {pos}");
                         ChunkData::Generating
                     });
@@ -152,13 +152,15 @@ fn mesh_generation(
             let mesh = chunk.mesh(neighbors);
 
             cmds.entity(entity)
-                .insert_bundle(PbrBundle {
-                    mesh: meshes.add(mesh),
-                    material: block_mat.0.clone(),
-                    transform: Transform::from_translation(VoxelWorld::world_pos(*pos)),
-                    ..default()
-                })
-                .insert(VisibleChunk(*pos))
+                .insert((
+                    PbrBundle {
+                        mesh: meshes.add(mesh),
+                        material: block_mat.0.clone(),
+                        transform: Transform::from_translation(VoxelWorld::world_pos(*pos)),
+                        ..default()
+                    },
+                    VisibleChunk(*pos),
+                ))
                 .remove::<GeneratedChunk>();
 
             world

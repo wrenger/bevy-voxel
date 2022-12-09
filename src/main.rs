@@ -14,7 +14,7 @@ mod world;
 use bevy_egui::EguiPlugin;
 use block::{BlockId, BlockLoader};
 use chunk::Chunk;
-use generation::Noise;
+use generation::WorldGen;
 use player::PlayerMovementPlugin;
 use textures::TextureMap;
 use world::{ChunkCenter, WorldPlugin};
@@ -26,8 +26,8 @@ fn main() {
         .init_resource::<ImageLoading>()
         .init_resource::<BlockLoading>()
         .init_resource::<BlockMat>()
-        .init_resource::<Noise>()
-        .insert_resource(Msaa { samples: 4 })
+        .init_resource::<WorldGen>()
+        .insert_resource(Msaa { samples: 1 })
         .add_plugins(DefaultPlugins)
         .add_plugin(FrameTimeDiagnosticsPlugin::default())
         .add_plugin(EguiPlugin)
@@ -54,7 +54,7 @@ enum AppState {
     Running,
 }
 
-#[derive(Default)]
+#[derive(Default, Resource)]
 struct ImageLoading(Vec<HandleUntyped>);
 
 /// Load all block textures
@@ -91,7 +91,7 @@ fn build_textures(
     .unwrap();
 }
 
-#[derive(Default)]
+#[derive(Default, Resource)]
 struct BlockLoading(Vec<HandleUntyped>);
 
 /// Load the block meshes.
@@ -110,7 +110,7 @@ fn check_blocks(
     }
 }
 
-#[derive(Default)]
+#[derive(Default, Resource)]
 pub struct BlockMat(Handle<StandardMaterial>);
 
 fn setup(
@@ -134,7 +134,7 @@ fn setup(
     for (i, handle) in loading.0.iter().enumerate() {
         let block_id = block_ids.get(&handle.typed_weak()).unwrap();
         let blocks = BLOCKS.read().unwrap();
-        cmds.spawn_bundle(PbrBundle {
+        cmds.spawn(PbrBundle {
             mesh: meshes.add(blocks[&block_id].mesh()),
             material: block_mat.clone(),
             transform: Transform::from_xyz(2.0 + 2.0 * i as f32, 0.0, 0.0),
@@ -144,59 +144,60 @@ fn setup(
 
     let cube_mesh = meshes.add(Mesh::from(shape::Cube { size: 2.0 }));
 
-    cmds.spawn()
-        .insert(ChunkCenter)
-        .insert_bundle(TransformBundle {
+    cmds.spawn((
+        ChunkCenter,
+        TransformBundle {
             ..Default::default()
-        })
-        .with_children(|cmds| {
-            let half = Chunk::SIZE as f32 / 2.0;
-            // -x
-            cmds.spawn_bundle(PbrBundle {
-                mesh: cube_mesh.clone(),
-                material: materials.add(Color::rgb(0.5, 0.2, 0.2).into()),
-                transform: Transform::from_xyz(-half, 0.0, 0.0),
-                ..default()
-            });
-            // +x
-            cmds.spawn_bundle(PbrBundle {
-                mesh: cube_mesh.clone(),
-                material: materials.add(Color::rgb(1.0, 0.2, 0.2).into()),
-                transform: Transform::from_xyz(half, 0.0, 0.0),
-                ..default()
-            });
-            // -y
-            cmds.spawn_bundle(PbrBundle {
-                mesh: cube_mesh.clone(),
-                material: materials.add(Color::rgb(0.2, 0.5, 0.2).into()),
-                transform: Transform::from_xyz(0.0, -half, 0.0),
-                ..default()
-            });
-            // +y
-            cmds.spawn_bundle(PbrBundle {
-                mesh: cube_mesh.clone(),
-                material: materials.add(Color::rgb(0.2, 1.0, 0.2).into()),
-                transform: Transform::from_xyz(0.0, half, 0.0),
-                ..default()
-            });
-            // -z
-            cmds.spawn_bundle(PbrBundle {
-                mesh: cube_mesh.clone(),
-                material: materials.add(Color::rgb(0.2, 0.2, 0.5).into()),
-                transform: Transform::from_xyz(0.0, 0.0, -half),
-                ..default()
-            });
-            // +z
-            cmds.spawn_bundle(PbrBundle {
-                mesh: cube_mesh.clone(),
-                material: materials.add(Color::rgb(0.2, 0.2, 1.0).into()),
-                transform: Transform::from_xyz(0.0, 0.0, half),
-                ..default()
-            });
+        },
+    ))
+    .with_children(|cmds| {
+        let half = Chunk::SIZE as f32 / 2.0;
+        // -x
+        cmds.spawn(PbrBundle {
+            mesh: cube_mesh.clone(),
+            material: materials.add(Color::rgb(0.5, 0.2, 0.2).into()),
+            transform: Transform::from_xyz(-half, 0.0, 0.0),
+            ..default()
         });
+        // +x
+        cmds.spawn(PbrBundle {
+            mesh: cube_mesh.clone(),
+            material: materials.add(Color::rgb(1.0, 0.2, 0.2).into()),
+            transform: Transform::from_xyz(half, 0.0, 0.0),
+            ..default()
+        });
+        // -y
+        cmds.spawn(PbrBundle {
+            mesh: cube_mesh.clone(),
+            material: materials.add(Color::rgb(0.2, 0.5, 0.2).into()),
+            transform: Transform::from_xyz(0.0, -half, 0.0),
+            ..default()
+        });
+        // +y
+        cmds.spawn(PbrBundle {
+            mesh: cube_mesh.clone(),
+            material: materials.add(Color::rgb(0.2, 1.0, 0.2).into()),
+            transform: Transform::from_xyz(0.0, half, 0.0),
+            ..default()
+        });
+        // -z
+        cmds.spawn(PbrBundle {
+            mesh: cube_mesh.clone(),
+            material: materials.add(Color::rgb(0.2, 0.2, 0.5).into()),
+            transform: Transform::from_xyz(0.0, 0.0, -half),
+            ..default()
+        });
+        // +z
+        cmds.spawn(PbrBundle {
+            mesh: cube_mesh.clone(),
+            material: materials.add(Color::rgb(0.2, 0.2, 1.0).into()),
+            transform: Transform::from_xyz(0.0, 0.0, half),
+            ..default()
+        });
+    });
 
     // Quad displaying the generated block texture atlas
-    cmds.spawn_bundle(PbrBundle {
+    cmds.spawn(PbrBundle {
         mesh: meshes.add(Mesh::from(shape::Quad {
             size: Vec2::new(4.0, 4.0),
             flip: false,
@@ -208,6 +209,6 @@ fn setup(
 
     cmds.insert_resource(AmbientLight {
         color: Color::WHITE,
-        brightness: 0.5,
+        brightness: 0.2,
     });
 }

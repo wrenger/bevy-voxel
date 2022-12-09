@@ -1,10 +1,14 @@
 use std::f32::consts::{FRAC_PI_2, FRAC_PI_4, PI};
 
+use bevy::core_pipeline::fxaa::Fxaa;
 use bevy::input::mouse::MouseMotion;
 use bevy::prelude::*;
 use bevy::render::camera::Projection;
-use bevy::window::WindowMode;
+use bevy::window::{CursorGrabMode, WindowMode};
+use bevy_egui::egui::emath::normalized_angle;
+use bevy_egui::egui::lerp;
 
+use crate::chunk::Chunk;
 use crate::AppState;
 
 pub struct PlayerMovementPlugin;
@@ -23,11 +27,16 @@ impl Plugin for PlayerMovementPlugin {
 pub struct PlayerController {
     pub yaw: f32,
     pub pitch: f32,
+    pub time: f32,
+    pub velocity: Vec3,
 }
 
+#[derive(Resource)]
 pub struct PlayerSettings {
     pub view_distance: usize,
     pub m_speed: f32,
+    pub m_acceleration: f32,
+    pub m_deceleration: f32,
     pub r_speed: f32,
 }
 
@@ -35,66 +44,74 @@ impl Default for PlayerSettings {
     fn default() -> Self {
         Self {
             view_distance: 6,
-            m_speed: 20.0,
+            m_speed: 35.0,
+            m_acceleration: 4.0,
+            m_deceleration: 10.0,
             r_speed: 0.5,
         }
     }
 }
 
+/// The player light that should be moved with the player.
+/// The parameter configures if the position should be rounded.
 #[derive(Default, Component)]
-struct PlayerLight;
+struct PlayerLight(bool);
 
 /// Create the player
 fn setup(mut cmds: Commands) {
-    cmds.spawn_bundle(Camera3dBundle {
-        projection: Projection::Perspective(PerspectiveProjection {
-            fov: PI / 2.0,
-            ..Default::default()
-        }),
-        transform: Transform::from_xyz(0.0, 1.0, 2.0).looking_at(Vec3::ZERO, Vec3::Y),
-        ..Default::default()
-    })
-    .insert(PlayerController {
-        yaw: 0.0,
-        pitch: 0.0,
-    });
+    cmds.spawn((
+        Camera3dBundle {
+            projection: Projection::Perspective(PerspectiveProjection {
+                fov: PI / 2.0,
+                ..default()
+            }),
+            transform: Transform::from_xyz(0.0, 0.0, 2.0).looking_at(Vec3::ZERO, Vec3::Y),
+            ..default()
+        },
+        PlayerController::default(),
+        Fxaa::default(),
+    ));
 
     // directional 'sun' light
-    const HALF_SIZE: f32 = 16.0;
-    cmds.spawn_bundle(DirectionalLightBundle {
-        directional_light: DirectionalLight {
-            shadow_projection: OrthographicProjection {
-                left: -HALF_SIZE,
-                right: HALF_SIZE,
-                bottom: -HALF_SIZE,
-                top: HALF_SIZE,
-                near: -10.0 * HALF_SIZE,
-                far: 10.0 * HALF_SIZE,
+    const HALF_SIZE: f32 = Chunk::SIZE as f32 * 6.0;
+    cmds.spawn((
+        PlayerLight(true),
+        DirectionalLightBundle {
+            directional_light: DirectionalLight {
+                shadow_projection: OrthographicProjection {
+                    left: -HALF_SIZE,
+                    right: HALF_SIZE,
+                    bottom: -HALF_SIZE,
+                    top: HALF_SIZE,
+                    near: -10.0 * HALF_SIZE,
+                    far: 10.0 * HALF_SIZE,
+                    ..default()
+                },
+                shadows_enabled: true,
                 ..default()
             },
-            shadows_enabled: true,
+            transform: Transform {
+                rotation: Quat::from_euler(EulerRot::YXZ, FRAC_PI_4, -FRAC_PI_4, 0.0),
+                ..default()
+            },
             ..default()
         },
-        transform: Transform {
-            rotation: Quat::from_euler(EulerRot::YXZ, FRAC_PI_4, -FRAC_PI_4, 0.0),
-            ..default()
-        },
-        ..default()
-    })
-    .insert(PlayerLight);
+    ));
 
-    cmds.spawn_bundle(PointLightBundle {
-        transform: Transform::from_xyz(0.0, 0.0, 0.0),
-        point_light: PointLight {
-            intensity: 1600.0, // lumens - roughly a 100W non-halogen incandescent bulb
-            color: Color::ORANGE,
-            shadows_enabled: false,
-            radius: 8.0,
+    cmds.spawn((
+        PlayerLight(false),
+        PointLightBundle {
+            transform: Transform::from_xyz(0.0, 0.0, 0.0),
+            point_light: PointLight {
+                intensity: 1600.0, // lumens - roughly a 100W non-halogen incandescent bulb
+                color: Color::ORANGE,
+                shadows_enabled: false,
+                radius: 8.0,
+                ..default()
+            },
             ..default()
         },
-        ..default()
-    })
-    .insert(PlayerLight);
+    ));
 }
 
 /// Handle player movement and rotation
@@ -108,11 +125,14 @@ fn player_movement(
 ) {
     let (mut transform, mut movement) = query.single_mut();
 
+    // Rotate the player via the mouse move event
     if mouse.pressed(MouseButton::Right) {
         if let Some(rotation) = mouse_move.iter().map(|m| m.delta).reduce(|a, e| a + e) {
             let mut new_pitch =
                 movement.pitch + rotation.y * time.delta_seconds() * settings.r_speed;
-            let new_yaw = movement.yaw + rotation.x * time.delta_seconds() * settings.r_speed;
+            let new_yaw = normalized_angle(
+                movement.yaw + rotation.x * time.delta_seconds() * settings.r_speed,
+            );
 
             new_pitch = new_pitch.clamp(-FRAC_PI_2, FRAC_PI_2);
 
@@ -124,6 +144,7 @@ fn player_movement(
         }
     }
 
+    // Get the movement direction from the user input
     let dir = Vec3::new(
         key.pressed(KeyCode::D) as i32 as f32 - key.pressed(KeyCode::A) as i32 as f32,
         key.pressed(KeyCode::Space) as i32 as f32 - key.pressed(KeyCode::LShift) as i32 as f32,
@@ -131,24 +152,50 @@ fn player_movement(
     )
     .clamp_length_max(1.0);
 
-    if dir.length_squared() > f32::EPSILON {
-        let velocity = Quat::from_axis_angle(-Vec3::Y, movement.yaw)
-            * dir
-            * time.delta_seconds()
-            * settings.m_speed;
-        transform.translation += velocity;
+    let actively_moving = dir.length_squared() > f32::EPSILON;
+
+    // Apply different accelerations based depending if the player accelerates or decelerates
+    let boost = if actively_moving {
+        // Activate deceleration boost after reaching 80% of the max possible movement speed
+        if movement.time < 0.8 {
+            movement.time = lerp(
+                movement.time..=1.0,
+                time.delta_seconds() * settings.m_acceleration,
+            );
+            settings.m_acceleration
+        } else {
+            info!("DDD");
+            settings.m_deceleration
+        }
+    } else {
+        movement.time = 0.0;
+        settings.m_deceleration
+    };
+
+    // Update the new player position
+    if actively_moving || movement.velocity.length_squared() > f32::EPSILON {
+        let velocity = movement.velocity.lerp(
+            Quat::from_axis_angle(-Vec3::Y, movement.yaw) * dir * settings.m_speed,
+            time.delta_seconds() * boost,
+        );
+        transform.translation += velocity * time.delta_seconds();
+        movement.velocity = velocity;
     }
 }
 
-// FIXME: The directional light shadows are not updated!
 // Maybe only update directional light pos when entering new chunk?
 fn move_lights(
     player: Query<&Transform, (With<PlayerController>, Changed<GlobalTransform>)>,
-    mut lights: Query<&mut Transform, (With<PlayerLight>, Without<PlayerController>)>,
+    mut lights: Query<(&mut Transform, &PlayerLight), Without<PlayerController>>,
 ) {
     if let Ok(target) = player.get_single() {
-        for mut transform in lights.iter_mut() {
-            transform.translation = target.translation;
+        for (mut transform, &PlayerLight(rounded)) in lights.iter_mut() {
+            transform.translation = if rounded {
+                // round to chunk size
+                (target.translation / Chunk::SIZE as f32).round() * Chunk::SIZE as f32
+            } else {
+                target.translation
+            };
         }
     }
 }
@@ -166,11 +213,11 @@ fn windowing(
 
     if mouse.just_pressed(MouseButton::Right) {
         window.set_cursor_visibility(false);
-        window.set_cursor_lock_mode(true);
+        window.set_cursor_grab_mode(CursorGrabMode::Locked);
     }
     if mouse.just_released(MouseButton::Right) {
         window.set_cursor_visibility(true);
-        window.set_cursor_lock_mode(false);
+        window.set_cursor_grab_mode(CursorGrabMode::None);
     }
 
     if key.just_pressed(KeyCode::F11)
