@@ -11,15 +11,24 @@ const MIN_HEIGHT: isize = -128;
 const MAX_HEIGHT: isize = 128;
 const DIRT_HEIGHT: usize = 2;
 
+/// World generation parameters
 #[derive(Debug, Resource, Clone)]
 pub struct WorldGen {
+    /// Ridge 3d noise parameter
     pub freq: f32,
+    /// Ridge 3d noise parameter
     pub lacunarity: f32,
+    /// Ridge 3d noise parameter
     pub gain: f32,
+    /// Ridge 3d noise parameter
     pub octaves: u8,
+    /// The limits (depending on the block height) where a lower noise value produces a solid block
     pub limits: Range<f32>,
+    /// The min/max height of the world
     pub height: Range<f32>,
+    /// How deep is the dirt generated (distance to air)
     pub dirt_height: usize,
+    /// Height range in which grass and dirt are generated
     pub dirt_range: Range<isize>,
 }
 
