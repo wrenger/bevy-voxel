@@ -1,29 +1,36 @@
-use std::ops::Range;
+use std::f32::consts::PI;
+use std::ops::{Index, Range};
 
 use bevy::prelude::*;
-use simdnoise::NoiseBuilder;
+use noise::{MultiFractal, NoiseFn, Perlin, RidgedMulti};
 
 use crate::block::BlockId;
 use crate::chunk::Chunk;
-use crate::util::RangeExt;
+use crate::util::{for_uvec3, RangeExt};
 
 const MIN_HEIGHT: isize = -128;
 const MAX_HEIGHT: isize = 128;
 const DIRT_HEIGHT: usize = 2;
 
+#[derive(Debug, Clone)]
+pub struct NoiseParam {
+    pub octaves: usize,
+    pub frequency: f32,
+    pub lacunarity: f32,
+    pub persistence: f32,
+    pub attenuation: f32,
+}
+
 /// World generation parameters
 #[derive(Debug, Resource, Clone)]
 pub struct WorldGen {
-    /// Ridge 3d noise parameter
-    pub freq: f32,
-    /// Ridge 3d noise parameter
-    pub lacunarity: f32,
-    /// Ridge 3d noise parameter
-    pub gain: f32,
-    /// Ridge 3d noise parameter
-    pub octaves: u8,
-    /// The limits (depending on the block height) where a lower noise value produces a solid block
-    pub limits: Range<f32>,
+    /// Base 3d noise
+    pub base: NoiseParam,
+    pub base_limit: Range<f32>,
+    pub base_strength: f32,
+    /// Cave 3d noise
+    pub cave_limit: Range<f32>,
+
     /// The min/max height of the world
     pub height: Range<f32>,
     /// How deep is the dirt generated (distance to air)
@@ -35,11 +42,16 @@ pub struct WorldGen {
 impl Default for WorldGen {
     fn default() -> Self {
         WorldGen {
-            freq: 0.05,
-            lacunarity: 0.65,
-            gain: 2.0,
-            octaves: 4,
-            limits: 3.5..4.0,
+            base: NoiseParam {
+                octaves: 6,
+                frequency: 0.02,
+                lacunarity: PI * 2.0 / 3.0,
+                persistence: 1.0,
+                attenuation: 2.0,
+            },
+            base_limit: -f32::INFINITY..0.5,
+            cave_limit: -0.1..0.1,
+            base_strength: 0.4,
             height: MIN_HEIGHT as _..MAX_HEIGHT as _,
             dirt_height: DIRT_HEIGHT,
             dirt_range: MIN_HEIGHT / 2..MAX_HEIGHT / 2,
@@ -49,80 +61,92 @@ impl Default for WorldGen {
 
 /// Generate a new chunk at this position with the given noise configuration.
 pub fn generate_chunk(pos: IVec3, gen: &WorldGen) -> Chunk {
-    let mut chunk = Chunk::new();
     if pos.y > (gen.height.end / Chunk::SIZE as f32).ceil() as i32 {
         // air
+        return Chunk::new(BlockId(0));
     } else if pos.y < ((gen.height.start - 1.0) / Chunk::SIZE as f32).floor() as i32 {
         // stone
-        chunk.fill(BlockId(1), UVec3::ZERO, Chunk::MAX - 1);
-    } else {
-        let border = gen.dirt_height;
+        return Chunk::new(BlockId(1));
+    }
 
-        let b_pos = pos.as_vec3() * Chunk::SIZE as f32;
-        let (base, _, _) = NoiseBuilder::ridge_3d_offset(
-            b_pos.x - border as f32,
-            Chunk::SIZE + 2 * border,
-            b_pos.y - border as f32,
-            Chunk::SIZE + 2 * border,
-            b_pos.z - border as f32,
-            Chunk::SIZE + 2 * border,
-        )
-        .with_freq(gen.freq)
-        .with_lacunarity(gen.lacunarity)
-        .with_gain(gen.gain)
-        .with_octaves(gen.octaves)
-        .generate();
+    let mut chunk = Chunk::new(BlockId(0));
+    let border = gen.dirt_height;
 
-        let idx = |x: isize, y: isize, z: isize| {
-            debug_assert!(
-                x >= -(border as isize)
-                    && y >= -(border as isize)
-                    && z >= -(border as isize)
-                    && x < (Chunk::SIZE + border) as isize
-                    && y < (Chunk::SIZE + border) as isize
-                    && z < (Chunk::SIZE + border) as isize
-            );
-            (border as isize + x) as usize
-                + (border as isize + y) as usize * (Chunk::SIZE + border * 2)
-                + (border as isize + z) as usize
-                    * (Chunk::SIZE + border * 2)
-                    * (Chunk::SIZE + border * 2)
-        };
+    let b_pos = pos * Chunk::SIZE as i32;
+    let noise_size = Chunk::SIZE + 2 * border;
 
-        for x in 0..Chunk::SIZE as isize {
-            for z in 0..Chunk::SIZE as isize {
-                'block: for y in 0..Chunk::SIZE as isize {
-                    let is_solid = |x: isize, y: isize, z: isize| {
-                        let gy = y as i32 + pos.y * Chunk::SIZE as i32;
-                        // The higher the lower the propability for stone
-                        let propability = gen.limits.lerp(1.0 - gen.height.lerp_inv(gy as _));
-                        base[idx(x, y, z)] < propability
-                    };
+    let mut solid = Noise::generate(&gen.base, b_pos - IVec3::splat(border as _), noise_size);
+    solid.apply(|p, v| gen.base_strength * v + gen.height.lerp_inv(p.y as _));
 
-                    let gy = y + pos.y as isize * Chunk::SIZE as isize;
+    for_uvec3(UVec3::ZERO, Chunk::MAX, |p| {
+        let gp = p.as_ivec3() + b_pos;
 
-                    if is_solid(x, y, z) {
-                        // Dirt and grass
-                        if gen.dirt_range.contains(&gy) {
-                            if !is_solid(x, y + 1, z) {
-                                chunk[UVec3::new(x as _, y as _, z as _)] = BlockId(3);
-                                continue 'block;
-                            } else {
-                                for i in 2..=gen.dirt_height as isize {
-                                    if !is_solid(x, y + i, z) {
-                                        chunk[UVec3::new(x as _, y as _, z as _)] = BlockId(2);
-                                        continue 'block;
-                                    }
-                                }
-                            }
+        if gen.base_limit.contains(&solid[gp]) {
+            // Dirt and grass
+            if gen.dirt_range.contains(&(gp.y as isize)) {
+                if !gen.base_limit.contains(&solid[gp + IVec3::Y]) {
+                    chunk[p] = BlockId(3);
+                    return;
+                } else {
+                    for i in 2..=gen.dirt_height as i32 {
+                        if !gen.base_limit.contains(&solid[gp + i * IVec3::Y]) {
+                            chunk[p] = BlockId(2);
+                            return;
                         }
-
-                        // Or Stone...
-                        chunk[UVec3::new(x as _, y as _, z as _)] = BlockId(1);
                     }
                 }
             }
+
+            // Or Stone...
+            chunk[p] = BlockId(1);
+        }
+    });
+    chunk
+}
+
+#[derive(Clone)]
+struct Noise {
+    start: IVec3,
+    size: usize,
+    data: Vec<f32>,
+}
+
+impl Noise {
+    fn generate(param: &NoiseParam, start: IVec3, size: usize) -> Self {
+        let noise = RidgedMulti::<Perlin>::new(0)
+            .set_octaves(param.octaves)
+            .set_frequency(param.frequency as _)
+            .set_lacunarity(param.lacunarity as _)
+            .set_persistence(param.persistence as _)
+            .set_attenuation(param.attenuation as _);
+        let mut data = Vec::with_capacity(size * size * size);
+        for_uvec3(UVec3::ZERO, UVec3::splat(size as _), |p| {
+            let p = start.as_dvec3() + p.as_dvec3();
+            let v = noise.get([p.y, p.z, p.x]) as f32;
+            assert!((-1.0..=1.0).contains(&v));
+            data.push(v);
+        });
+        Self { start, size, data }
+    }
+
+    fn apply(&mut self, mut f: impl FnMut(IVec3, f32) -> f32) {
+        for (i, v) in self.data.iter_mut().enumerate() {
+            let size = self.size as i32;
+            let i = i as i32;
+            let di = i / size;
+            let vec = self.start + IVec3::new(di % size, i % size, (di / size) % size);
+            *v = f(vec, *v);
         }
     }
-    chunk
+}
+
+impl Index<IVec3> for Noise {
+    type Output = f32;
+
+    fn index(&self, index: IVec3) -> &Self::Output {
+        let offset = index - self.start;
+        assert!(offset.min_element() >= 0 && offset.max_element() < self.size as i32);
+        let i = offset.y as usize + self.size * (offset.z as usize + self.size * offset.x as usize);
+        &self.data[i]
+    }
 }

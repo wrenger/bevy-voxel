@@ -9,14 +9,14 @@ use bevy::render::once_cell::sync::Lazy;
 use bevy::utils::HashMap;
 use serde::Deserialize;
 
-use crate::textures::{TextureMap, TextureMapId};
+use crate::textures::{TileTextures, TileTextureId};
 use crate::util::Direction;
 
 /// Id of a block. This is also used by the asset server to load the blocks
 /// before storing them in a shared map.
 #[derive(Debug, Clone, Copy, TypeUuid, Deserialize, PartialEq, Eq, Hash)]
 #[uuid = "fd6772fe-c8b7-4e89-b1f8-4af6faa57627"]
-pub struct BlockId(pub u16);
+pub struct BlockId(pub u8);
 
 pub static BLOCKS: Lazy<RwLock<HashMap<BlockId, Block>>> = Lazy::new(default);
 
@@ -116,7 +116,7 @@ impl Cube {
 
                 normals.extend_from_slice(&[Vec3::from(d).into(); 4]);
 
-                let uv = TextureMap::get().uv(face.texture);
+                let uv = TileTextures::get().uv(face.texture);
                 // TODO: Scale to cube size
                 uvs.extend_from_slice(&[
                     (uv.0 + r_uvs[0] * (uv.1 - uv.0)).into(),
@@ -149,7 +149,7 @@ impl IndexMut<Direction> for Cube {
 #[derive(Debug, Clone)]
 pub struct Face {
     /// Id of the face's texture.
-    pub texture: TextureMapId,
+    pub texture: TileTextureId,
     /// If the block in the direction is occupied this face is not rendered.
     pub cull: Option<Direction>,
 }
@@ -200,7 +200,7 @@ impl AssetLoader for BlockLoader {
         Box::pin(async move {
             let block_data: BlockData = serde_json::from_slice(bytes)?;
 
-            let texture_map = TextureMap::get();
+            let texture_map = TileTextures::get();
 
             let block = Block {
                 opaque: block_data.opaque,

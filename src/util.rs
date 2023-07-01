@@ -1,7 +1,7 @@
 use std::f32::consts::PI;
 use std::ops::Range;
 
-use bevy::math::{IVec3, Quat, Vec3};
+use bevy::math::{IVec3, Quat, UVec3, Vec3};
 use serde::Deserialize;
 
 /// 3d world direction.
@@ -119,101 +119,22 @@ impl RangeExt for Range<f32> {
     }
 }
 
-#[derive(Debug, Clone, Copy)]
-pub struct Range3 {
-    off: IVec3,
-    max: IVec3,
-    i: usize,
-}
-
-impl Range3 {
-    pub fn new(from: IVec3, to: IVec3) -> Range3 {
-        let max = (to - from).abs().max(IVec3::ONE);
-        let off = (to - from).min(from - to);
-        Self { off, max, i: 0 }
-    }
-
-    fn ivec3(&self) -> Option<IVec3> {
-        let p = IVec3::new(
-            self.i as i32 % self.max.y,
-            (self.i as i32 / self.max.y) % self.max.x,
-            (self.i as i32 / self.max.y) / self.max.x,
-        );
-        if p.z < self.max.z {
-            Some(p + self.off)
-        } else {
-            None
+/// Iterates over all coordinates in the cube betweed the `from` (inclusive) and `to` (exclusive) points.
+///
+/// Iteration order: XZY (out -> in)
+pub fn for_uvec3(from: UVec3, to: UVec3, mut f: impl FnMut(UVec3)) {
+    for x in from.x..to.x {
+        for z in from.z..to.z {
+            for y in from.y..to.y {
+                f(UVec3::new(x, y, z))
+            }
         }
-    }
-}
-
-impl Iterator for Range3 {
-    type Item = IVec3;
-
-    fn next(&mut self) -> Option<Self::Item> {
-        self.i += 1;
-        self.ivec3()
-    }
-
-    fn size_hint(&self) -> (usize, Option<usize>) {
-        let size = self.max.x * self.max.y * self.max.z;
-        (size as usize, Some(size as usize))
-    }
-
-    fn count(self) -> usize
-    where
-        Self: Sized,
-    {
-        let size = self.max.x * self.max.y * self.max.z;
-        size as usize
-    }
-
-    fn last(mut self) -> Option<Self::Item>
-    where
-        Self: Sized,
-    {
-        if let Some(c) = self.len().checked_sub(1) {
-            self.nth(c)
-        } else {
-            None
-        }
-    }
-
-    fn nth(&mut self, n: usize) -> Option<Self::Item> {
-        self.i += n;
-        self.ivec3()
-    }
-}
-
-impl DoubleEndedIterator for Range3 {
-    fn next_back(&mut self) -> Option<Self::Item> {
-        if let Some(i) = self.i.checked_sub(1) {
-            self.i = i;
-            self.ivec3()
-        } else {
-            None
-        }
-    }
-    fn nth_back(&mut self, n: usize) -> Option<Self::Item> {
-        if let Some(i) = self.i.checked_sub(n) {
-            self.i = i;
-            self.ivec3()
-        } else {
-            None
-        }
-    }
-}
-
-impl ExactSizeIterator for Range3 {
-    fn len(&self) -> usize {
-        let size = self.max.x * self.max.y * self.max.z;
-        size as usize
     }
 }
 
 #[cfg(test)]
 mod test {
-    use super::{Direction, Range3};
+    use super::Direction;
     use bevy::prelude::*;
 
     #[test]
@@ -241,13 +162,5 @@ mod test {
         assert_eq!(p.round(), Vec3::new(4.0, 0.0, 31.0 - 2.0));
         let p = Quat::from(Direction::PosY) * (pos - center) + center;
         assert_eq!(p.round(), Vec3::new(4.0, 31.0, 2.0));
-    }
-
-    #[test]
-    fn range_3() {
-        let mut range = Range3::new(IVec3::ZERO, IVec3::ONE);
-        assert_eq!(range.count(), 1);
-        assert_eq!(range.len(), 1);
-        assert_eq!(range.next(), Some(IVec3::ZERO));
     }
 }

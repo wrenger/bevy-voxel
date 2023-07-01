@@ -7,15 +7,15 @@ use bevy::render::texture::ImageSampler;
 use bevy::utils::HashMap;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct TextureMapId(usize);
+pub struct TileTextureId(usize);
 
-static MAP: OnceCell<TextureMap> = OnceCell::new();
+static MAP: OnceCell<TileTextures> = OnceCell::new();
 
 /// The combined texture atlas for all of the blocks.
 #[derive(Debug)]
-pub struct TextureMap {
+pub struct TileTextures {
     atlas: TextureAtlas,
-    mapping: HashMap<String, TextureMapId>,
+    mapping: HashMap<String, TileTextureId>,
 }
 
 /// Error during texture atlas generation.
@@ -30,7 +30,7 @@ impl fmt::Display for TextureMapError {
     }
 }
 
-impl TextureMap {
+impl TileTextures {
     /// Build the texture atlas of the list of texture `handles`.
     pub fn build(
         handles: &[Handle<Image>],
@@ -62,11 +62,11 @@ impl TextureMap {
                 .to_string_lossy();
             mapping.insert(
                 name.into_owned(),
-                TextureMapId(atlas.get_texture_index(&handle).unwrap()),
+                TileTextureId(atlas.get_texture_index(handle).unwrap()),
             );
         }
 
-        MAP.set(TextureMap { atlas, mapping }).unwrap();
+        MAP.set(TileTextures { atlas, mapping }).unwrap();
 
         Ok(())
     }
@@ -81,7 +81,7 @@ impl TextureMap {
     }
 
     /// Return the uv coordinates for the given texture `id`.
-    pub fn uv(&self, id: TextureMapId) -> (Vec2, Vec2) {
+    pub fn uv(&self, id: TileTextureId) -> (Vec2, Vec2) {
         const V2_EPS: f32 = 0.0001;
 
         assert!(id.0 < self.atlas.len());
@@ -91,7 +91,7 @@ impl TextureMap {
     }
 
     /// Return the numerical id for the given texture `name`.
-    pub fn id(&self, ident: &str) -> TextureMapId {
+    pub fn id(&self, ident: &str) -> TileTextureId {
         self.mapping[ident]
     }
 }

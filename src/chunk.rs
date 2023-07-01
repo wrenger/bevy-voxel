@@ -6,7 +6,7 @@ use bevy::render::mesh::{Indices, PrimitiveTopology};
 use bevy::utils::HashMap;
 
 use crate::block::{Block, BlockId, BLOCKS};
-use crate::util::Direction;
+use crate::util::{for_uvec3, Direction};
 
 /// Each chunk contains a number of blocks.
 /// A single mesh covering all the blocks is generated for every chunk.
@@ -19,23 +19,9 @@ impl Chunk {
     pub const SIZE: usize = 32;
     pub const MAX: UVec3 = UVec3::splat(Self::SIZE as u32);
 
-    pub fn new() -> Self {
+    pub fn new(block: BlockId) -> Self {
         Self {
-            blocks: Box::new([[[BlockId(0); Chunk::SIZE]; Chunk::SIZE]; Chunk::SIZE]),
-        }
-    }
-
-    pub fn fill(&mut self, block: BlockId, from: UVec3, to: UVec3) {
-        debug_assert!(
-            (from.x <= to.x && to.x < Self::SIZE as u32)
-                && (from.y <= to.y && to.y < Self::SIZE as u32)
-        );
-        for x in from.y..=to.y {
-            for z in from.z..=to.z {
-                for y in from.x..=to.x {
-                    self[UVec3::new(x, y, z)] = block;
-                }
-            }
+            blocks: Box::new([[[block; Chunk::SIZE]; Chunk::SIZE]; Chunk::SIZE]),
         }
     }
 
@@ -50,7 +36,7 @@ impl Chunk {
             for x in 0..Self::SIZE as u32 {
                 let pos = Self::from_surface(dir, UVec2::new(x, y));
                 if self.occupied(pos, blocks) {
-                    border.set_occupied(UVec2::new(x as u32, y as u32));
+                    border.set_occupied(UVec2::new(x, y));
                 }
             }
         }
@@ -67,39 +53,33 @@ impl Chunk {
 
         let blocks = BLOCKS.read().unwrap();
 
-        for x in 0..Self::SIZE {
-            for z in 0..Self::SIZE {
-                for y in 0..Self::SIZE {
-                    let pos = UVec3::new(x as _, y as _, z as _);
+        for_uvec3(UVec3::ZERO, Self::MAX, |pos| {
+            let occupied = Direction::all().map(|d| {
+                let p = pos.as_ivec3() + IVec3::from(d);
+                if p.cmpge(IVec3::ZERO).all() && p.cmplt(Self::MAX.as_ivec3()).all() {
+                    self.occupied(p.as_uvec3(), &blocks)
+                } else {
+                    // Check neighbors if out of bounds
+                    let p = (p + Self::MAX.as_ivec3()).as_uvec3() % Self::MAX;
+                    let p2 = Self::to_surface(d.inverse(), p);
+                    neighbors[d as usize].occupied(p2)
+                }
+            });
 
-                    let occupied = Direction::all().map(|d| {
-                        let p = pos.as_ivec3() + IVec3::from(d);
-                        if p.cmpge(IVec3::ZERO).all() && p.cmplt(Self::MAX.as_ivec3()).all() {
-                            self.occupied(p.as_uvec3(), &blocks)
-                        } else {
-                            // Check neighbors if out of bounds
-                            let p = (p + Self::MAX.as_ivec3()).as_uvec3() % Self::MAX;
-                            let p2 = Self::to_surface(d.inverse(), p);
-                            neighbors[d as usize].occupied(p2)
-                        }
-                    });
-
-                    if !occupied.iter().all(|b| *b) {
-                        let block = &blocks[&self[pos]];
-                        for cube in &block.cubes {
-                            cube.mesh(
-                                pos.as_vec3(),
-                                occupied,
-                                &mut indices,
-                                &mut positions,
-                                &mut normals,
-                                &mut uvs,
-                            );
-                        }
-                    }
+            if !occupied.iter().all(|b| *b) {
+                let block = &blocks[&self[pos]];
+                for cube in &block.cubes {
+                    cube.mesh(
+                        pos.as_vec3(),
+                        occupied,
+                        &mut indices,
+                        &mut positions,
+                        &mut normals,
+                        &mut uvs,
+                    );
                 }
             }
-        }
+        });
 
         let mut mesh = Mesh::new(PrimitiveTopology::TriangleList);
         mesh.insert_attribute(Mesh::ATTRIBUTE_POSITION, positions);
@@ -145,7 +125,7 @@ impl IndexMut<UVec3> for Chunk {
 pub struct Border([u8; Chunk::SIZE * Chunk::SIZE / 8]);
 
 impl Border {
-    fn new() -> Self {
+    pub fn new() -> Self {
         Self([0; Chunk::SIZE * Chunk::SIZE / 8])
     }
     fn occupied(self, p: UVec2) -> bool {
@@ -168,9 +148,9 @@ impl fmt::Debug for Border {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         writeln!(f, "Border(")?;
         for row in self.0.chunks(Chunk::SIZE / 8).rev() {
-            write!(f, "    ")?;
+            write!(f, "   ")?;
             for v in row {
-                write!(f, "{:08b} ", v.reverse_bits())?;
+                write!(f, " {:08b}", v.reverse_bits())?;
             }
             writeln!(f)?;
         }
@@ -207,7 +187,7 @@ mod test {
             },
         );
 
-        let mut chunk = Chunk::new();
+        let mut chunk = Chunk::new(BlockId(0));
         let pos = [
             UVec3::new(0, 1, 2),
             UVec3::new(3, 0, 4),

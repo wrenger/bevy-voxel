@@ -1,6 +1,3 @@
-use std::mem::zeroed;
-
-use bevy::math::IVec3;
 use bevy::prelude::*;
 use bevy::tasks::{AsyncComputeTaskPool, Task};
 use bevy::utils::hashbrown::HashMap;
@@ -79,7 +76,6 @@ fn init_generation(
                             (pos, chunk)
                         });
                         cmds.spawn(ChunkResult(task));
-                        info!("generate {pos}");
                         ChunkData::Generating
                     });
                 }
@@ -95,7 +91,6 @@ fn handle_generation(
 ) {
     for (entity, mut task) in query.iter_mut() {
         if let Some((pos, chunk)) = future::block_on(future::poll_once(&mut task.0)) {
-            info!("generated {pos}");
             let previous = world.chunks.insert(pos, ChunkData::Generated(chunk));
             if let Some(ChunkData::Generating) = previous {
                 cmds.entity(entity)
@@ -132,9 +127,7 @@ fn mesh_generation(
         if let Some(ChunkData::Generated(chunk)) = world.chunks.get(pos) {
             let blocks = BLOCKS.read().unwrap();
 
-            // SAFETY: All NULL values are overwritten
-            #[allow(invalid_value)]
-            let mut neighbors: [Border; 6] = unsafe { zeroed() };
+            let mut neighbors: [Border; 6] = [Border::new(); 6];
             for d in Direction::all() {
                 match world.chunks.get(&(*pos + IVec3::from(d))) {
                     Some(ChunkData::Visible(chunk) | ChunkData::Generated(chunk)) => {
@@ -146,7 +139,6 @@ fn mesh_generation(
                     }
                 }
             }
-            info!("drawing {pos}");
 
             // takes a lot of time!
             let mesh = chunk.mesh(neighbors);
@@ -254,14 +246,16 @@ impl Plugin for WorldPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<VoxelWorld>()
             .add_event::<RegenerateEvent>()
-            .add_system_set(
-                SystemSet::on_update(AppState::Running)
-                    .with_system(init_generation)
-                    .with_system(handle_generation)
-                    .with_system(mesh_generation)
-                    .with_system(despawn_chunks)
-                    .with_system(regenerate_chunks)
-                    .with_system(move_chunk_center),
-            );
+            .add_systems(
+                (
+                    init_generation,
+                    handle_generation,
+                    mesh_generation,
+                    despawn_chunks,
+                    regenerate_chunks,
+                )
+                    .in_set(OnUpdate(AppState::Running)),
+            )
+            .add_system(move_chunk_center.in_set(OnUpdate(AppState::Running)));
     }
 }

@@ -1,4 +1,4 @@
-use bevy::asset::LoadState;
+use bevy::{asset::LoadState, pbr::DirectionalLightShadowMap};
 use bevy::diagnostic::FrameTimeDiagnosticsPlugin;
 use bevy::prelude::*;
 
@@ -16,7 +16,8 @@ use block::{BlockId, BlockLoader};
 use chunk::Chunk;
 use generation::WorldGen;
 use player::PlayerMovementPlugin;
-use textures::TextureMap;
+use textures::TileTextures;
+use ui::UIPlugin;
 use world::{ChunkCenter, WorldPlugin};
 
 use crate::block::BLOCKS;
@@ -27,28 +28,30 @@ fn main() {
         .init_resource::<BlockLoading>()
         .init_resource::<BlockMat>()
         .init_resource::<WorldGen>()
-        .insert_resource(Msaa { samples: 1 })
+        .insert_resource(Msaa::Sample4)
+        .insert_resource(DirectionalLightShadowMap { size: 4096 })
         .add_plugins(DefaultPlugins)
         .add_plugin(FrameTimeDiagnosticsPlugin::default())
         .add_plugin(EguiPlugin)
         .add_asset::<BlockId>()
         .init_asset_loader::<BlockLoader>()
-        .add_state(AppState::LoadTextures)
+        .add_state::<AppState>()
         .add_plugin(PlayerMovementPlugin)
         .add_plugin(WorldPlugin)
-        .add_system_set(SystemSet::on_enter(AppState::LoadTextures).with_system(load_textures))
-        .add_system_set(SystemSet::on_update(AppState::LoadTextures).with_system(check_textures))
-        .add_system_set(SystemSet::on_exit(AppState::LoadTextures).with_system(build_textures))
-        .add_system_set(SystemSet::on_enter(AppState::LoadBlocks).with_system(load_blocks))
-        .add_system_set(SystemSet::on_update(AppState::LoadBlocks).with_system(check_blocks))
-        .add_system_set(SystemSet::on_enter(AppState::Running).with_system(setup))
-        .add_system_set(SystemSet::on_update(AppState::Running).with_system(ui::update))
+        .add_plugin(UIPlugin)
+        .add_system(load_textures.in_schedule(OnEnter(AppState::LoadTextures)))
+        .add_system(check_textures.in_set(OnUpdate(AppState::LoadTextures)))
+        .add_system(build_textures.in_schedule(OnExit(AppState::LoadTextures)))
+        .add_system(load_blocks.in_schedule(OnEnter(AppState::LoadBlocks)))
+        .add_system(check_blocks.in_set(OnUpdate(AppState::LoadBlocks)))
+        .add_system(setup.in_schedule(OnEnter(AppState::Running)))
         .run();
 }
 
 /// The different asset loading states of the app.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, States)]
 enum AppState {
+    #[default]
     LoadTextures,
     LoadBlocks,
     Running,
@@ -64,12 +67,12 @@ fn load_textures(mut loading: ResMut<ImageLoading>, asset_server: Res<AssetServe
 
 /// Wait for the block texture loading
 fn check_textures(
-    mut state: ResMut<State<AppState>>,
+    mut state: ResMut<NextState<AppState>>,
     loading: Res<ImageLoading>,
     asset_server: Res<AssetServer>,
 ) {
-    if let LoadState::Loaded = asset_server.get_group_load_state(loading.0.iter().map(|h| h.id)) {
-        state.set(AppState::LoadBlocks).unwrap()
+    if let LoadState::Loaded = asset_server.get_group_load_state(loading.0.iter().map(|h| h.id())) {
+        state.set(AppState::LoadBlocks)
     }
 }
 
@@ -79,7 +82,7 @@ fn build_textures(
     loading: Res<ImageLoading>,
     asset_server: Res<AssetServer>,
 ) {
-    TextureMap::build(
+    TileTextures::build(
         &loading
             .0
             .iter()
@@ -101,12 +104,12 @@ fn load_blocks(mut loading: ResMut<BlockLoading>, asset_server: Res<AssetServer>
 
 /// Wait for the block meshes.
 fn check_blocks(
-    mut state: ResMut<State<AppState>>,
+    mut state: ResMut<NextState<AppState>>,
     loading: Res<BlockLoading>,
     asset_server: Res<AssetServer>,
 ) {
-    if let LoadState::Loaded = asset_server.get_group_load_state(loading.0.iter().map(|h| h.id)) {
-        state.set(AppState::Running).unwrap()
+    if let LoadState::Loaded = asset_server.get_group_load_state(loading.0.iter().map(|h| h.id())) {
+        state.set(AppState::Running)
     }
 }
 
@@ -122,7 +125,7 @@ fn setup(
 ) {
     // The combined block material
     let block_mat = materials.add(StandardMaterial {
-        base_color_texture: Some(TextureMap::get().image()),
+        base_color_texture: Some(TileTextures::get().image()),
         metallic: 0.05,
         perceptual_roughness: 1.0,
         reflectance: 0.1,
@@ -135,7 +138,7 @@ fn setup(
         let block_id = block_ids.get(&handle.typed_weak()).unwrap();
         let blocks = BLOCKS.read().unwrap();
         cmds.spawn(PbrBundle {
-            mesh: meshes.add(blocks[&block_id].mesh()),
+            mesh: meshes.add(blocks[block_id].mesh()),
             material: block_mat.clone(),
             transform: Transform::from_xyz(2.0 + 2.0 * i as f32, 0.0, 0.0),
             ..default()

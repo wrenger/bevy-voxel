@@ -1,14 +1,14 @@
-use std::f32::consts::{FRAC_PI_2, FRAC_PI_4, PI};
+use std::f32::consts::{FRAC_PI_2, FRAC_PI_4, PI, TAU};
 
 use bevy::core_pipeline::fxaa::Fxaa;
 use bevy::input::mouse::MouseMotion;
+use bevy::pbr::CascadeShadowConfigBuilder;
 use bevy::prelude::*;
 use bevy::render::camera::Projection;
-use bevy::window::{CursorGrabMode, WindowMode};
-use bevy_egui::egui::emath::normalized_angle;
-use bevy_egui::egui::lerp;
+use bevy::window::{CursorGrabMode, PrimaryWindow, WindowMode};
 
 use crate::chunk::Chunk;
+use crate::util::RangeExt;
 use crate::AppState;
 
 pub struct PlayerMovementPlugin;
@@ -16,10 +16,12 @@ pub struct PlayerMovementPlugin;
 impl Plugin for PlayerMovementPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<PlayerSettings>()
-            .add_system_set(SystemSet::on_enter(AppState::Running).with_system(setup))
-            .add_system_set(SystemSet::on_update(AppState::Running).with_system(windowing))
-            .add_system_set(SystemSet::on_update(AppState::Running).with_system(player_movement))
-            .add_system_set(SystemSet::on_update(AppState::Running).with_system(move_lights));
+            .add_system(setup.in_schedule(OnEnter(AppState::Running)))
+            .add_systems(
+                (windowing, player_movement, move_lights)
+                    .chain()
+                    .in_set(OnUpdate(AppState::Running)),
+            );
     }
 }
 
@@ -55,7 +57,7 @@ impl Default for PlayerSettings {
 /// The player light that should be moved with the player.
 /// The parameter configures if the position should be rounded.
 #[derive(Default, Component)]
-struct PlayerLight(bool);
+struct PlayerLight;
 
 /// Create the player
 fn setup(mut cmds: Commands) {
@@ -69,37 +71,32 @@ fn setup(mut cmds: Commands) {
             ..default()
         },
         PlayerController::default(),
-        Fxaa::default(),
+        Fxaa::default()
     ));
 
     // directional 'sun' light
-    const HALF_SIZE: f32 = Chunk::SIZE as f32 * 6.0;
-    cmds.spawn((
-        PlayerLight(true),
-        DirectionalLightBundle {
-            directional_light: DirectionalLight {
-                shadow_projection: OrthographicProjection {
-                    left: -HALF_SIZE,
-                    right: HALF_SIZE,
-                    bottom: -HALF_SIZE,
-                    top: HALF_SIZE,
-                    near: -10.0 * HALF_SIZE,
-                    far: 10.0 * HALF_SIZE,
-                    ..default()
-                },
-                shadows_enabled: true,
-                ..default()
-            },
-            transform: Transform {
-                rotation: Quat::from_euler(EulerRot::YXZ, FRAC_PI_4, -FRAC_PI_4, 0.0),
-                ..default()
-            },
+    const HALF_SIZE: f32 = Chunk::SIZE as f32 * 8.0;
+    cmds.spawn(DirectionalLightBundle {
+        directional_light: DirectionalLight {
+            shadows_enabled: true,
             ..default()
         },
-    ));
+        cascade_shadow_config: CascadeShadowConfigBuilder {
+            first_cascade_far_bound: 8.0,
+            maximum_distance: HALF_SIZE,
+            overlap_proportion: 0.4,
+            ..default()
+        }
+        .into(),
+        transform: Transform {
+            rotation: Quat::from_euler(EulerRot::YXZ, FRAC_PI_4, -FRAC_PI_4, 0.0),
+            ..default()
+        },
+        ..default()
+    });
 
     cmds.spawn((
-        PlayerLight(false),
+        PlayerLight,
         PointLightBundle {
             transform: Transform::from_xyz(0.0, 0.0, 0.0),
             point_light: PointLight {
@@ -128,13 +125,10 @@ fn player_movement(
     // Rotate the player via the mouse move event
     if mouse.pressed(MouseButton::Right) {
         if let Some(rotation) = mouse_move.iter().map(|m| m.delta).reduce(|a, e| a + e) {
-            let mut new_pitch =
-                movement.pitch + rotation.y * time.delta_seconds() * settings.r_speed;
-            let new_yaw = normalized_angle(
-                movement.yaw + rotation.x * time.delta_seconds() * settings.r_speed,
-            );
-
-            new_pitch = new_pitch.clamp(-FRAC_PI_2, FRAC_PI_2);
+            let new_pitch = (movement.pitch + rotation.y * time.delta_seconds() * settings.r_speed)
+                .clamp(-FRAC_PI_2, FRAC_PI_2);
+            let new_yaw =
+                (movement.yaw + rotation.x * time.delta_seconds() * settings.r_speed) % TAU;
 
             movement.pitch = new_pitch;
             movement.yaw = new_yaw;
@@ -158,13 +152,10 @@ fn player_movement(
     let boost = if actively_moving {
         // Activate deceleration boost after reaching 80% of the max possible movement speed
         if movement.time < 0.8 {
-            movement.time = lerp(
-                movement.time..=1.0,
-                time.delta_seconds() * settings.m_acceleration,
-            );
+            movement.time =
+                (movement.time..1.0).lerp(time.delta_seconds() * settings.m_acceleration);
             settings.m_acceleration
         } else {
-            info!("DDD");
             settings.m_deceleration
         }
     } else {
@@ -186,16 +177,11 @@ fn player_movement(
 // Maybe only update directional light pos when entering new chunk?
 fn move_lights(
     player: Query<&Transform, (With<PlayerController>, Changed<GlobalTransform>)>,
-    mut lights: Query<(&mut Transform, &PlayerLight), Without<PlayerController>>,
+    mut lights: Query<&mut Transform, (With<PlayerLight>, Without<PlayerController>)>,
 ) {
     if let Ok(target) = player.get_single() {
-        for (mut transform, &PlayerLight(rounded)) in lights.iter_mut() {
-            transform.translation = if rounded {
-                // round to chunk size
-                (target.translation / Chunk::SIZE as f32).round() * Chunk::SIZE as f32
-            } else {
-                target.translation
-            };
+        for mut transform in lights.iter_mut() {
+            transform.translation = target.translation;
         }
     }
 }
@@ -204,29 +190,26 @@ fn move_lights(
 fn windowing(
     key: Res<Input<KeyCode>>,
     mouse: Res<Input<MouseButton>>,
-    mut windows: ResMut<Windows>,
+    mut windows: Query<&mut Window, With<PrimaryWindow>>,
 ) {
-    let window = match windows.get_primary_mut() {
-        Some(w) => w,
-        _ => return,
-    };
+    let mut window = windows.single_mut();
 
     if mouse.just_pressed(MouseButton::Right) {
-        window.set_cursor_visibility(false);
-        window.set_cursor_grab_mode(CursorGrabMode::Locked);
+        window.cursor.visible = false;
+        window.cursor.grab_mode = CursorGrabMode::Locked;
     }
     if mouse.just_released(MouseButton::Right) {
-        window.set_cursor_visibility(true);
-        window.set_cursor_grab_mode(CursorGrabMode::None);
+        window.cursor.visible = true;
+        window.cursor.grab_mode = CursorGrabMode::None;
     }
 
     if key.just_pressed(KeyCode::F11)
         || (key.pressed(KeyCode::LAlt) && key.just_pressed(KeyCode::Return))
     {
-        window.set_mode(if window.mode() != WindowMode::Fullscreen {
+        window.mode = if window.mode != WindowMode::Fullscreen {
             WindowMode::Fullscreen
         } else {
             WindowMode::Windowed
-        });
+        };
     }
 }
