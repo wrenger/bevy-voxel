@@ -10,6 +10,7 @@ use crate::util::{for_uvec3, Direction};
 
 /// Each chunk contains a number of blocks.
 /// A single mesh covering all the blocks is generated for every chunk.
+#[derive(Clone)]
 pub struct Chunk {
     /// They are stored in the order: Y, Z, X (in -> out)
     blocks: Box<[[[BlockId; Chunk::SIZE]; Chunk::SIZE]; Chunk::SIZE]>,

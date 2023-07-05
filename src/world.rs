@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use bevy::prelude::*;
 use bevy::tasks::{AsyncComputeTaskPool, Task};
 use bevy::utils::hashbrown::HashMap;
@@ -10,16 +12,10 @@ use crate::player::{PlayerController, PlayerSettings};
 use crate::util::Direction;
 use crate::{AppState, BlockMat};
 
-enum ChunkData {
-    Generating,
-    Generated(Chunk),
-    Visible(Chunk),
-}
-
 /// The world, consisting of smaller chunks
 #[derive(Default, Resource)]
 pub struct VoxelWorld {
-    chunks: HashMap<IVec3, ChunkData>,
+    chunks: HashMap<IVec3, Entity>,
 }
 
 impl VoxelWorld {
@@ -37,14 +33,23 @@ impl VoxelWorld {
     }
 }
 
-#[derive(Debug, Default, Clone, Copy, Component, PartialEq, Eq)]
-struct GeneratedChunk(IVec3);
-
-#[derive(Debug, Default, Clone, Copy, Component, PartialEq, Eq)]
-struct VisibleChunk(IVec3);
+#[derive(Component, Clone, Copy, Debug, PartialEq, Eq)]
+struct ChunkPos(IVec3);
 
 #[derive(Component)]
-struct ChunkResult(Task<(IVec3, Chunk)>);
+struct ChunkData(Arc<Chunk>);
+
+#[derive(Component)]
+struct Generating(Task<Chunk>);
+
+#[derive(Component, Debug)]
+struct MissingNeighbors(usize);
+
+#[derive(Component)]
+struct RequiresMesh;
+
+#[derive(Component)]
+struct Meshing(Task<Mesh>);
 
 fn init_generation(
     mut cmds: Commands,
@@ -71,12 +76,9 @@ fn init_generation(
                     let pos = center + off;
                     world.chunks.entry(pos).or_insert_with(|| {
                         let noise = noise.clone();
-                        let task = thread_pool.spawn(async move {
-                            let chunk = generate_chunk(pos, &noise);
-                            (pos, chunk)
-                        });
-                        cmds.spawn(ChunkResult(task));
-                        ChunkData::Generating
+                        let task = thread_pool.spawn(async move { generate_chunk(pos, &noise) });
+                        let entity = cmds.spawn((ChunkPos(pos), Generating(task))).id();
+                        entity
                     });
                 }
             }
@@ -86,84 +88,98 @@ fn init_generation(
 
 fn handle_generation(
     mut cmds: Commands,
-    mut world: ResMut<VoxelWorld>,
-    mut query: Query<(Entity, &mut ChunkResult)>,
+    world: Res<VoxelWorld>,
+    mut query: Query<(Entity, &ChunkPos, &mut Generating)>,
+    mut neighbors: Query<&mut MissingNeighbors>,
 ) {
-    for (entity, mut task) in query.iter_mut() {
-        if let Some((pos, chunk)) = future::block_on(future::poll_once(&mut task.0)) {
-            let previous = world.chunks.insert(pos, ChunkData::Generated(chunk));
-            if let Some(ChunkData::Generating) = previous {
-                cmds.entity(entity)
-                    .insert(GeneratedChunk(pos))
-                    .remove::<ChunkResult>();
-            } else {
-                warn!("Outdated chunk: {pos}");
+    for (entity, ChunkPos(pos), mut task) in query.iter_mut() {
+        if let Some(chunk) = future::block_on(future::poll_once(&mut task.0)) {
+            let mut surrounded = Vec::with_capacity(6);
+            if let Some(mut cmds) = cmds.get_entity(entity) {
+                let mut count = 6;
+
+                for d in Direction::all() {
+                    if let Some(entity) = world.chunks.get(&(*pos + IVec3::from(d))) {
+                        count -= 1;
+                        if let Ok(mut missing) = neighbors.get_mut(*entity) {
+                            if missing.0 > 1 {
+                                missing.0 -= 1;
+                            } else {
+                                surrounded.push(*entity);
+                            }
+                        }
+                    }
+                }
+
+                cmds.insert((MissingNeighbors(count), ChunkData(Arc::new(chunk))))
+                    .remove::<Generating>();
+            }
+            for entity in surrounded {
+                cmds.get_entity(entity).map(|mut c| {
+                    c.insert(RequiresMesh).remove::<MissingNeighbors>();
+                });
             }
         }
     }
 }
 
-fn mesh_generation(
+fn init_mesh(
     mut cmds: Commands,
-    mut world: ResMut<VoxelWorld>,
-    mut meshes: ResMut<Assets<Mesh>>,
-    block_mat: Res<BlockMat>,
+    world: Res<VoxelWorld>,
     settings: Res<PlayerSettings>,
     player_query: Query<&Transform, With<PlayerController>>,
-    query: Query<(Entity, &GeneratedChunk)>,
+    query_mesh: Query<(Entity, &ChunkPos, &ChunkData, With<RequiresMesh>)>,
+    query_data: Query<&ChunkData>,
 ) {
     let player_transform = player_query.single();
     let center = VoxelWorld::chunk_pos(player_transform.translation);
-    let mut sorted = query.iter().collect::<Vec<_>>();
-    sorted.sort_unstable_by_key(|(_, GeneratedChunk(p))| distance(*p - center));
-
     let dist = settings.view_distance as u32;
+    let thread_pool = AsyncComputeTaskPool::get();
 
-    'entities: for (entity, GeneratedChunk(pos)) in sorted.into_iter() {
+    query_mesh.for_each(|(entity, ChunkPos(pos), ChunkData(chunk), _)| {
         if distance(center - *pos) >= dist {
-            continue;
+            return;
         }
 
-        if let Some(ChunkData::Generated(chunk)) = world.chunks.get(pos) {
-            let blocks = BLOCKS.read().unwrap();
+        let blocks = BLOCKS.read().unwrap();
 
-            let mut neighbors: [Border; 6] = [Border::new(); 6];
-            for d in Direction::all() {
-                match world.chunks.get(&(*pos + IVec3::from(d))) {
-                    Some(ChunkData::Visible(chunk) | ChunkData::Generated(chunk)) => {
-                        neighbors[d as usize] = chunk.border(d.inverse(), &blocks);
-                    }
-                    _ => {
-                        info!("skip drawing {pos}");
-                        continue 'entities;
-                    }
-                }
+        let mut borders = [Border::new(); 6];
+        for d in Direction::all() {
+            let Some(&entity) = world.chunks.get(&(*pos + IVec3::from(d))) else {
+                return;
+            };
+
+            if let Ok(ChunkData(chunk)) = query_data.get(entity) {
+                borders[d as usize] = chunk.border(d.inverse(), &blocks);
+            } else {
+                return;
             }
+        }
 
-            // takes a lot of time!
-            let mesh = chunk.mesh(neighbors);
+        let chunk = chunk.clone();
+        let task = thread_pool.spawn(async move { chunk.mesh(borders) });
+        cmds.entity(entity)
+            .insert(Meshing(task))
+            .remove::<RequiresMesh>();
+    });
+}
 
+fn handle_mesh(
+    mut cmds: Commands,
+    mut query: Query<(Entity, &ChunkPos, &mut Meshing)>,
+    mut meshes: ResMut<Assets<Mesh>>,
+    block_mat: Res<BlockMat>,
+) {
+    for (entity, ChunkPos(pos), mut task) in query.iter_mut() {
+        if let Some(mesh) = future::block_on(future::poll_once(&mut task.0)) {
             cmds.entity(entity)
-                .insert((
-                    PbrBundle {
-                        mesh: meshes.add(mesh),
-                        material: block_mat.0.clone(),
-                        transform: Transform::from_translation(VoxelWorld::world_pos(*pos)),
-                        ..default()
-                    },
-                    VisibleChunk(*pos),
-                ))
-                .remove::<GeneratedChunk>();
-
-            world
-                .chunks
-                .entry(*pos)
-                .and_replace_entry_with(|_, v| match v {
-                    ChunkData::Generated(v) => Some(ChunkData::Visible(v)),
-                    _ => None,
-                });
-
-            return;
+                .insert((PbrBundle {
+                    mesh: meshes.add(mesh),
+                    material: block_mat.0.clone(),
+                    transform: Transform::from_translation(VoxelWorld::world_pos(*pos)),
+                    ..default()
+                },))
+                .remove::<Meshing>();
         }
     }
 }
@@ -172,26 +188,16 @@ fn despawn_chunks(
     mut cmds: Commands,
     mut world: ResMut<VoxelWorld>,
     settings: Res<PlayerSettings>,
-    query: Query<&Transform, With<PlayerController>>,
-    visible_query: Query<(Entity, &VisibleChunk)>,
-    generated_query: Query<(Entity, &GeneratedChunk)>,
+    player: Query<&Transform, With<PlayerController>>,
+    chunks: Query<(Entity, &ChunkPos)>,
 ) {
-    let player_transform = query.single();
+    let player_transform = player.single();
     let center = VoxelWorld::chunk_pos(player_transform.translation);
 
     let dist = settings.view_distance as u32;
 
-    visible_query.for_each(|(entity, VisibleChunk(pos))| {
+    chunks.for_each(|(entity, ChunkPos(pos))| {
         if distance(center - *pos) > dist {
-            info!("despawn {pos}");
-            cmds.entity(entity).despawn();
-            world.chunks.remove(pos);
-        }
-    });
-
-    generated_query.for_each(|(entity, GeneratedChunk(pos))| {
-        if distance(center - *pos) > dist + 1 {
-            info!("despawn {pos}");
             cmds.entity(entity).despawn();
             world.chunks.remove(pos);
         }
@@ -208,19 +214,13 @@ fn regenerate_chunks(
     mut events: EventReader<RegenerateEvent>,
     mut cmds: Commands,
     mut world: ResMut<VoxelWorld>,
-    chunk_query: Query<Entity, With<VisibleChunk>>,
-    visible_query: Query<Entity, With<GeneratedChunk>>,
-    generating_query: Query<Entity, With<ChunkResult>>,
+    chunks: Query<Entity, With<ChunkPos>>,
 ) {
-    let mut regenerate = false;
-    for _ in events.iter() {
-        regenerate = true;
-    }
-    if regenerate {
+    if !events.is_empty() {
+        events.clear();
+
         warn!("Regenerate!");
-        chunk_query.for_each(|entity| cmds.entity(entity).despawn());
-        visible_query.for_each(|entity| cmds.entity(entity).despawn());
-        generating_query.for_each(|entity| cmds.entity(entity).despawn());
+        chunks.for_each(|entity| cmds.entity(entity).despawn());
         world.clear();
     }
 }
@@ -250,7 +250,8 @@ impl Plugin for WorldPlugin {
                 (
                     init_generation,
                     handle_generation,
-                    mesh_generation,
+                    init_mesh,
+                    handle_mesh,
                     despawn_chunks,
                     regenerate_chunks,
                 )

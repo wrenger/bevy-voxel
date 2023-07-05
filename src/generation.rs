@@ -1,8 +1,9 @@
+use std::cell::RefCell;
 use std::f32::consts::PI;
-use std::ops::{Index, Range};
+use std::ops::Range;
 
 use bevy::prelude::*;
-use noise::{MultiFractal, NoiseFn, Perlin, RidgedMulti};
+use noise::{MultiFractal, NoiseFn, RidgedMulti, Simplex};
 
 use crate::block::BlockId;
 use crate::chunk::Chunk;
@@ -50,8 +51,8 @@ impl Default for WorldGen {
                 attenuation: 2.0,
             },
             base_limit: -f32::INFINITY..0.5,
-            cave_limit: -0.1..0.1,
             base_strength: 0.4,
+            cave_limit: -0.1..0.1,
             height: MIN_HEIGHT as _..MAX_HEIGHT as _,
             dirt_height: DIRT_HEIGHT,
             dirt_range: MIN_HEIGHT / 2..MAX_HEIGHT / 2,
@@ -70,26 +71,24 @@ pub fn generate_chunk(pos: IVec3, gen: &WorldGen) -> Chunk {
     }
 
     let mut chunk = Chunk::new(BlockId(0));
-    let border = gen.dirt_height;
 
     let b_pos = pos * Chunk::SIZE as i32;
-    let noise_size = Chunk::SIZE + 2 * border;
 
-    let mut solid = Noise::generate(&gen.base, b_pos - IVec3::splat(border as _), noise_size);
-    solid.apply(|p, v| gen.base_strength * v + gen.height.lerp_inv(p.y as _));
+    let solid = RigedSimplex::new(&gen.base)
+        .map(|p, v| gen.base_strength * v + gen.height.lerp_inv(p.y as _));
 
     for_uvec3(UVec3::ZERO, Chunk::MAX, |p| {
         let gp = p.as_ivec3() + b_pos;
 
-        if gen.base_limit.contains(&solid[gp]) {
+        if gen.base_limit.contains(&solid.get(gp)) {
             // Dirt and grass
             if gen.dirt_range.contains(&(gp.y as isize)) {
-                if !gen.base_limit.contains(&solid[gp + IVec3::Y]) {
+                if !gen.base_limit.contains(&solid.get(gp + IVec3::Y)) {
                     chunk[p] = BlockId(3);
                     return;
                 } else {
                     for i in 2..=gen.dirt_height as i32 {
-                        if !gen.base_limit.contains(&solid[gp + i * IVec3::Y]) {
+                        if !gen.base_limit.contains(&solid.get(gp + i * IVec3::Y)) {
                             chunk[p] = BlockId(2);
                             return;
                         }
@@ -104,49 +103,97 @@ pub fn generate_chunk(pos: IVec3, gen: &WorldGen) -> Chunk {
     chunk
 }
 
-#[derive(Clone)]
-struct Noise {
-    start: IVec3,
-    size: usize,
-    data: Vec<f32>,
+/// 3D Noise
+trait Noise3D: Sized {
+    fn get(&self, p: IVec3) -> f32;
+
+    fn map<F: Fn(IVec3, f32) -> f32>(self, f: F) -> Map<Self, F> {
+        Map { noise: self, f }
+    }
+    fn map_mut<F: FnMut(IVec3, f32) -> f32>(self, f: F) -> MapMut<Self, F> {
+        MapMut {
+            noise: self,
+            f: RefCell::new(f),
+        }
+    }
+    fn generate(self, start: IVec3, size: usize) -> Generated {
+        Generated::new(self, start, size)
+    }
 }
 
-impl Noise {
-    fn generate(param: &NoiseParam, start: IVec3, size: usize) -> Self {
-        let noise = RidgedMulti::<Perlin>::new(0)
+/// Wrapper for a 3D noise
+#[derive(Clone)]
+struct RigedSimplex {
+    inner: RidgedMulti<Simplex>,
+}
+
+impl RigedSimplex {
+    fn new(param: &NoiseParam) -> Self {
+        let inner = RidgedMulti::<Simplex>::new(0)
             .set_octaves(param.octaves)
             .set_frequency(param.frequency as _)
             .set_lacunarity(param.lacunarity as _)
             .set_persistence(param.persistence as _)
             .set_attenuation(param.attenuation as _);
-        let mut data = Vec::with_capacity(size * size * size);
-        for_uvec3(UVec3::ZERO, UVec3::splat(size as _), |p| {
-            let p = start.as_dvec3() + p.as_dvec3();
-            let v = noise.get([p.y, p.z, p.x]) as f32;
-            assert!((-1.0..=1.0).contains(&v));
-            data.push(v);
-        });
-        Self { start, size, data }
-    }
-
-    fn apply(&mut self, mut f: impl FnMut(IVec3, f32) -> f32) {
-        for (i, v) in self.data.iter_mut().enumerate() {
-            let size = self.size as i32;
-            let i = i as i32;
-            let di = i / size;
-            let vec = self.start + IVec3::new(di % size, i % size, (di / size) % size);
-            *v = f(vec, *v);
-        }
+        Self { inner }
     }
 }
 
-impl Index<IVec3> for Noise {
-    type Output = f32;
+impl Noise3D for RigedSimplex {
+    fn get(&self, p: IVec3) -> f32 {
+        self.inner.get(p.as_dvec3().to_array()) as _
+    }
+}
 
-    fn index(&self, index: IVec3) -> &Self::Output {
-        let offset = index - self.start;
-        assert!(offset.min_element() >= 0 && offset.max_element() < self.size as i32);
-        let i = offset.y as usize + self.size * (offset.z as usize + self.size * offset.x as usize);
-        &self.data[i]
+/// Postprocesses the noise output with f
+struct Map<N: Noise3D, F: Fn(IVec3, f32) -> f32> {
+    noise: N,
+    f: F,
+}
+
+impl<N: Noise3D, F: Fn(IVec3, f32) -> f32> Noise3D for Map<N, F> {
+    fn get(&self, index: IVec3) -> f32 {
+        (&self.f)(index, self.noise.get(index))
+    }
+}
+
+/// Postprocesses the noise output with f
+struct MapMut<N: Noise3D, F: FnMut(IVec3, f32) -> f32> {
+    noise: N,
+    /// Yes a little bit ugly...
+    f: RefCell<F>,
+}
+
+impl<N: Noise3D, F: FnMut(IVec3, f32) -> f32> Noise3D for MapMut<N, F> {
+    fn get(&self, index: IVec3) -> f32 {
+        (self.f.borrow_mut())(index, self.noise.get(index))
+    }
+}
+
+/// Pregenerates the noise value for a 3D cube
+struct Generated {
+    /// Data in yzx order
+    data: Vec<f32>,
+    start: IVec3,
+    size: usize,
+}
+
+impl Generated {
+    fn new(noise: impl Noise3D, start: IVec3, size: usize) -> Self {
+        let mut data = Vec::with_capacity(size * size * size);
+        for_uvec3(UVec3::ZERO, UVec3::splat(size as _), |p| {
+            let p = start + p.as_ivec3();
+            data.push(noise.get([p.y, p.z, p.x].into()) as _);
+        });
+        Self { data, start, size }
+    }
+}
+
+impl Noise3D for Generated {
+    fn get(&self, p: IVec3) -> f32 {
+        let p = p - self.start;
+        assert!(p.min_element() >= 0 && p.max_element() < self.size as i32);
+        let i = p.y as usize + self.size * (p.z as usize + self.size * p.x as usize);
+        self.data[i]
     }
 }
