@@ -1,8 +1,9 @@
 use std::f32::consts::{FRAC_PI_2, FRAC_PI_4, PI, TAU};
 
+use bevy::core_pipeline::experimental::taa::TemporalAntiAliasBundle;
 use bevy::core_pipeline::fxaa::Fxaa;
 use bevy::input::mouse::MouseMotion;
-use bevy::pbr::CascadeShadowConfigBuilder;
+use bevy::pbr::{CascadeShadowConfigBuilder, ScreenSpaceAmbientOcclusionBundle};
 use bevy::prelude::*;
 use bevy::render::camera::Projection;
 use bevy::window::{CursorGrabMode, PrimaryWindow, WindowMode};
@@ -16,11 +17,12 @@ pub struct PlayerMovementPlugin;
 impl Plugin for PlayerMovementPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<PlayerSettings>()
-            .add_system(setup.in_schedule(OnEnter(AppState::Running)))
+            .add_systems(OnEnter(AppState::Running), setup)
             .add_systems(
+                Update,
                 (windowing, player_movement, move_lights)
                     .chain()
-                    .in_set(OnUpdate(AppState::Running)),
+                    .run_if(in_state(AppState::Running)),
             );
     }
 }
@@ -71,8 +73,10 @@ fn setup(mut cmds: Commands) {
             ..default()
         },
         PlayerController::default(),
-        Fxaa::default()
-    ));
+        Fxaa::default(),
+    ))
+    .insert(ScreenSpaceAmbientOcclusionBundle::default())
+    .insert(TemporalAntiAliasBundle::default());
 
     // directional 'sun' light
     const HALF_SIZE: f32 = Chunk::SIZE as f32 * 8.0;
@@ -141,7 +145,7 @@ fn player_movement(
     // Get the movement direction from the user input
     let dir = Vec3::new(
         key.pressed(KeyCode::D) as i32 as f32 - key.pressed(KeyCode::A) as i32 as f32,
-        key.pressed(KeyCode::Space) as i32 as f32 - key.pressed(KeyCode::LShift) as i32 as f32,
+        key.pressed(KeyCode::Space) as i32 as f32 - key.pressed(KeyCode::ShiftLeft) as i32 as f32,
         key.pressed(KeyCode::S) as i32 as f32 - key.pressed(KeyCode::W) as i32 as f32,
     )
     .clamp_length_max(1.0);
@@ -204,7 +208,7 @@ fn windowing(
     }
 
     if key.just_pressed(KeyCode::F11)
-        || (key.pressed(KeyCode::LAlt) && key.just_pressed(KeyCode::Return))
+        || (key.pressed(KeyCode::AltLeft) && key.just_pressed(KeyCode::Return))
     {
         window.mode = if window.mode != WindowMode::Fullscreen {
             WindowMode::Fullscreen

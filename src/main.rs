@@ -1,3 +1,4 @@
+use bevy::core_pipeline::experimental::taa::TemporalAntiAliasPlugin;
 use bevy::{asset::LoadState, pbr::DirectionalLightShadowMap};
 use bevy::diagnostic::FrameTimeDiagnosticsPlugin;
 use bevy::prelude::*;
@@ -20,7 +21,7 @@ use textures::TileTextures;
 use ui::UIPlugin;
 use world::{ChunkCenter, WorldPlugin};
 
-use crate::block::BLOCKS;
+use crate::block::blocks;
 
 fn main() {
     App::new()
@@ -28,25 +29,25 @@ fn main() {
         .init_resource::<BlockLoading>()
         .init_resource::<BlockMat>()
         .init_resource::<WorldGen>()
-        .insert_resource(Msaa::Sample4)
         .insert_resource(DirectionalLightShadowMap { size: 4096 })
-        .add_plugins(DefaultPlugins)
-        .add_plugin(FrameTimeDiagnosticsPlugin::default())
-        .add_plugin(EguiPlugin)
+        .add_plugins((DefaultPlugins, TemporalAntiAliasPlugin))
+        .add_plugins(FrameTimeDiagnosticsPlugin::default())
+        .add_plugins(EguiPlugin)
         .add_asset::<BlockId>()
         .init_asset_loader::<BlockLoader>()
         .add_state::<AppState>()
-        .add_plugin(PlayerMovementPlugin)
-        .add_plugin(WorldPlugin)
-        .add_plugin(UIPlugin)
-        .add_system(load_textures.in_schedule(OnEnter(AppState::LoadTextures)))
-        .add_system(check_textures.in_set(OnUpdate(AppState::LoadTextures)))
-        .add_system(build_textures.in_schedule(OnExit(AppState::LoadTextures)))
-        .add_system(load_blocks.in_schedule(OnEnter(AppState::LoadBlocks)))
-        .add_system(check_blocks.in_set(OnUpdate(AppState::LoadBlocks)))
-        .add_system(setup.in_schedule(OnEnter(AppState::Running)))
+        .add_systems(OnEnter(AppState::LoadTextures), load_textures)
+        .add_systems(Update, check_textures.run_if(in_state(AppState::LoadTextures)))
+        .add_systems(OnExit(AppState::LoadTextures), build_textures)
+        .add_systems(OnEnter(AppState::LoadBlocks), load_blocks)
+        .add_systems(Update, check_blocks.run_if(in_state(AppState::LoadBlocks)))
+        .add_systems(OnEnter(AppState::Running), setup)
+        .add_plugins(PlayerMovementPlugin)
+        .add_plugins(WorldPlugin)
+        .add_plugins(UIPlugin)
         .run();
 }
+
 
 /// The different asset loading states of the app.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, States)]
@@ -136,7 +137,7 @@ fn setup(
     // Spawn all available blocks
     for (i, handle) in loading.0.iter().enumerate() {
         let block_id = block_ids.get(&handle.typed_weak()).unwrap();
-        let blocks = BLOCKS.read().unwrap();
+        let blocks = blocks().read().unwrap();
         cmds.spawn(PbrBundle {
             mesh: meshes.add(blocks[block_id].mesh()),
             material: block_mat.clone(),
@@ -149,9 +150,7 @@ fn setup(
 
     cmds.spawn((
         ChunkCenter,
-        TransformBundle {
-            ..Default::default()
-        },
+        SpatialBundle::default(),
     ))
     .with_children(|cmds| {
         let half = Chunk::SIZE as f32 / 2.0;

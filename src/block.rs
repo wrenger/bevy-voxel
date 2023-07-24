@@ -1,11 +1,10 @@
 use std::ops::{Index, IndexMut};
-use std::sync::RwLock;
+use std::sync::{RwLock, OnceLock};
 
 use bevy::asset::{AssetLoader, BoxedFuture, LoadContext, LoadedAsset};
 use bevy::prelude::*;
-use bevy::reflect::TypeUuid;
+use bevy::reflect::{TypeUuid, TypePath};
 use bevy::render::mesh::{Indices, PrimitiveTopology};
-use bevy::render::once_cell::sync::Lazy;
 use bevy::utils::HashMap;
 use serde::Deserialize;
 
@@ -14,11 +13,15 @@ use crate::util::Direction;
 
 /// Id of a block. This is also used by the asset server to load the blocks
 /// before storing them in a shared map.
-#[derive(Debug, Clone, Copy, TypeUuid, Deserialize, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, TypeUuid, TypePath, Deserialize, PartialEq, Eq, Hash)]
 #[uuid = "fd6772fe-c8b7-4e89-b1f8-4af6faa57627"]
 pub struct BlockId(pub u8);
 
-pub static BLOCKS: Lazy<RwLock<HashMap<BlockId, Block>>> = Lazy::new(default);
+static BLOCKS: OnceLock<RwLock<HashMap<BlockId, Block>>> = OnceLock::new();
+
+pub fn blocks<'a>() -> &'a RwLock<HashMap<BlockId, Block>> {
+    BLOCKS.get_or_init(default)
+}
 
 /// Block occupying a specific coordinate.
 #[derive(Debug, Clone)]
@@ -241,7 +244,7 @@ impl AssetLoader for BlockLoader {
             };
 
             load_context.set_default_asset(LoadedAsset::new(block_data.id));
-            BLOCKS.write().unwrap().insert(block_data.id, block);
+            blocks().write().unwrap().insert(block_data.id, block);
 
             Ok(())
         })

@@ -1,15 +1,15 @@
 use std::error::Error;
 use std::fmt;
+use std::sync::OnceLock;
 
 use bevy::prelude::*;
-use bevy::render::once_cell::sync::OnceCell;
 use bevy::render::texture::ImageSampler;
 use bevy::utils::HashMap;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct TileTextureId(usize);
 
-static MAP: OnceCell<TileTextures> = OnceCell::new();
+static MAP: OnceLock<TileTextures> = OnceLock::new();
 
 /// The combined texture atlas for all of the blocks.
 #[derive(Debug)]

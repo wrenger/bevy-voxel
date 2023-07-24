@@ -1,6 +1,6 @@
 use std::time::Duration;
 
-use bevy::diagnostic::{Diagnostics, FrameTimeDiagnosticsPlugin};
+use bevy::diagnostic::{DiagnosticsStore, FrameTimeDiagnosticsPlugin};
 use bevy::prelude::*;
 
 use bevy::time::common_conditions::on_timer;
@@ -18,8 +18,11 @@ pub struct UIPlugin;
 impl Plugin for UIPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<FPSHistory>()
-            .add_system(fps_history.run_if(on_timer(Duration::from_secs_f32(0.2))))
-            .add_system(update.in_set(OnUpdate(AppState::Running)));
+            .add_systems(
+                Update,
+                fps_history.run_if(on_timer(Duration::from_secs_f32(0.2))),
+            )
+            .add_systems(Update, update.run_if(in_state(AppState::Running)));
     }
 }
 
@@ -50,7 +53,7 @@ impl FPSHistory {
     }
 }
 
-pub fn fps_history(mut fps_history: ResMut<FPSHistory>, diagnostics: Res<Diagnostics>) {
+pub fn fps_history(mut fps_history: ResMut<FPSHistory>, diagnostics: Res<DiagnosticsStore>) {
     if let Some(fps) = diagnostics.get(FrameTimeDiagnosticsPlugin::FPS) {
         if let Some(avg) = fps.average() {
             fps_history.add(avg);
@@ -81,12 +84,7 @@ pub fn update(
 
         let line = Line::new(PlotPoints::from_iter(measurements));
 
-        let max = fps
-            .iter()
-            .reduce(f64::max)
-            .unwrap_or_default()
-            .max(60.0)
-            + 30.0;
+        let max = fps.iter().reduce(f64::max).unwrap_or_default().max(60.0) + 30.0;
 
         Plot::new("fps")
             .view_aspect(4.0)

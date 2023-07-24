@@ -5,7 +5,7 @@ use bevy::prelude::*;
 use bevy::render::mesh::{Indices, PrimitiveTopology};
 use bevy::utils::HashMap;
 
-use crate::block::{Block, BlockId, BLOCKS};
+use crate::block::{Block, BlockId, blocks};
 use crate::util::{for_uvec3, Direction};
 
 /// Each chunk contains a number of blocks.
@@ -52,7 +52,7 @@ impl Chunk {
         let mut uvs = Vec::with_capacity(24);
         let mut indices = Vec::new();
 
-        let blocks = BLOCKS.read().unwrap();
+        let blocks = blocks().read().unwrap();
 
         for_uvec3(UVec3::ZERO, Self::MAX, |pos| {
             let occupied = Direction::all().map(|d| {

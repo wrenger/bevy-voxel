@@ -5,7 +5,7 @@ use bevy::tasks::{AsyncComputeTaskPool, Task};
 use bevy::utils::hashbrown::HashMap;
 use futures_lite::future;
 
-use crate::block::BLOCKS;
+use crate::block::blocks;
 use crate::chunk::{Border, Chunk};
 use crate::generation::{generate_chunk, WorldGen};
 use crate::player::{PlayerController, PlayerSettings};
@@ -141,7 +141,7 @@ fn init_mesh(
             return;
         }
 
-        let blocks = BLOCKS.read().unwrap();
+        let blocks = blocks().read().unwrap();
 
         let mut borders = [Border::new(); 6];
         for d in Direction::all() {
@@ -208,6 +208,7 @@ fn distance(p: IVec3) -> u32 {
     p.max_element().abs().max(p.min_element().abs()) as _
 }
 
+#[derive(Event)]
 pub struct RegenerateEvent;
 
 fn regenerate_chunks(
@@ -247,6 +248,7 @@ impl Plugin for WorldPlugin {
         app.init_resource::<VoxelWorld>()
             .add_event::<RegenerateEvent>()
             .add_systems(
+                Update,
                 (
                     init_generation,
                     handle_generation,
@@ -255,8 +257,11 @@ impl Plugin for WorldPlugin {
                     despawn_chunks,
                     regenerate_chunks,
                 )
-                    .in_set(OnUpdate(AppState::Running)),
+                    .run_if(in_state(AppState::Running)),
             )
-            .add_system(move_chunk_center.in_set(OnUpdate(AppState::Running)));
+            .add_systems(
+                Update,
+                move_chunk_center.run_if(in_state(AppState::Running)),
+            );
     }
 }
