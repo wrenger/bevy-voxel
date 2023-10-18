@@ -5,7 +5,7 @@ use bevy::prelude::*;
 use bevy::render::mesh::{Indices, PrimitiveTopology};
 use bevy::utils::HashMap;
 
-use crate::block::{Block, BlockId, blocks};
+use crate::block::{blocks, Block, BlockId};
 use crate::util::{for_uvec3, Direction};
 
 /// Each chunk contains a number of blocks.
@@ -46,7 +46,7 @@ impl Chunk {
 
     /// Computes a single mesh over all blocks.
     /// Not visible faces are excluded.
-    pub fn mesh(&self, neighbors: [Border; 6]) -> Mesh {
+    pub fn mesh(&self, borders: [Border; 6]) -> Mesh {
         let mut positions = Vec::with_capacity(24);
         let mut normals = Vec::with_capacity(24);
         let mut uvs = Vec::with_capacity(24);
@@ -63,7 +63,7 @@ impl Chunk {
                     // Check neighbors if out of bounds
                     let p = (p + Self::MAX.as_ivec3()).as_uvec3() % Self::MAX;
                     let p2 = Self::to_surface(d.inverse(), p);
-                    neighbors[d as usize].occupied(p2)
+                    borders[d as usize].occupied(p2)
                 }
             });
 

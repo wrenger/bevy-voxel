@@ -1,14 +1,14 @@
 use std::ops::{Index, IndexMut};
-use std::sync::{RwLock, OnceLock};
+use std::sync::{OnceLock, RwLock};
 
 use bevy::asset::{AssetLoader, BoxedFuture, LoadContext, LoadedAsset};
 use bevy::prelude::*;
-use bevy::reflect::{TypeUuid, TypePath};
+use bevy::reflect::{TypePath, TypeUuid};
 use bevy::render::mesh::{Indices, PrimitiveTopology};
 use bevy::utils::HashMap;
 use serde::Deserialize;
 
-use crate::textures::{TileTextures, TileTextureId};
+use crate::textures::{TileTextureId, TileTextures};
 use crate::util::Direction;
 
 /// Id of a block. This is also used by the asset server to load the blocks
@@ -120,13 +120,7 @@ impl Cube {
                 normals.extend_from_slice(&[Vec3::from(d).into(); 4]);
 
                 let uv = TileTextures::get().uv(face.texture);
-                // TODO: Scale to cube size
-                uvs.extend_from_slice(&[
-                    (uv.0 + r_uvs[0] * (uv.1 - uv.0)).into(),
-                    (uv.0 + r_uvs[1] * (uv.1 - uv.0)).into(),
-                    (uv.0 + r_uvs[2] * (uv.1 - uv.0)).into(),
-                    (uv.0 + r_uvs[3] * (uv.1 - uv.0)).into(),
-                ]);
+                uvs.extend_from_slice(&r_uvs.map(|r_uv| (uv.0 + r_uv * (uv.1 - uv.0)).into()));
 
                 let j = indices.len() as u32 / 6 * 4;
                 indices.extend_from_slice(&[j, j + 1, j + 2, j, j + 2, j + 3]);
@@ -156,7 +150,6 @@ pub struct Face {
     /// If the block in the direction is occupied this face is not rendered.
     pub cull: Option<Direction>,
 }
-
 
 /// Deserializer for the block json format.
 #[derive(Debug, Deserialize)]
@@ -213,32 +206,10 @@ impl AssetLoader for BlockLoader {
                     .map(|c| Cube {
                         min: c.min,
                         max: c.max,
-                        faces: [
-                            Face {
-                                texture: texture_map.id(&c.faces[0].texture),
-                                cull: c.faces[0].cull,
-                            },
-                            Face {
-                                texture: texture_map.id(&c.faces[1].texture),
-                                cull: c.faces[1].cull,
-                            },
-                            Face {
-                                texture: texture_map.id(&c.faces[2].texture),
-                                cull: c.faces[2].cull,
-                            },
-                            Face {
-                                texture: texture_map.id(&c.faces[3].texture),
-                                cull: c.faces[3].cull,
-                            },
-                            Face {
-                                texture: texture_map.id(&c.faces[4].texture),
-                                cull: c.faces[4].cull,
-                            },
-                            Face {
-                                texture: texture_map.id(&c.faces[5].texture),
-                                cull: c.faces[5].cull,
-                            },
-                        ],
+                        faces: c.faces.map(|f| Face {
+                            texture: texture_map.id(&f.texture),
+                            cull: f.cull,
+                        }),
                     })
                     .collect(),
             };

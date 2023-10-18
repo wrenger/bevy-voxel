@@ -45,7 +45,7 @@ impl Default for WorldGen {
         WorldGen {
             base: NoiseParam {
                 octaves: 6,
-                frequency: 0.02,
+                frequency: 0.01,
                 lacunarity: PI * 2.0 / 3.0,
                 persistence: 1.0,
                 attenuation: 2.0,

@@ -96,11 +96,11 @@ fn handle_generation(
         if let Some(chunk) = future::block_on(future::poll_once(&mut task.0)) {
             let mut surrounded = Vec::with_capacity(6);
             if let Some(mut cmds) = cmds.get_entity(entity) {
-                let mut count = 6;
+                let mut missing = 6;
 
                 for d in Direction::all() {
                     if let Some(entity) = world.chunks.get(&(*pos + IVec3::from(d))) {
-                        count -= 1;
+                        missing -= 1;
                         if let Ok(mut missing) = neighbors.get_mut(*entity) {
                             if missing.0 > 1 {
                                 missing.0 -= 1;
@@ -111,8 +111,13 @@ fn handle_generation(
                     }
                 }
 
-                cmds.insert((MissingNeighbors(count), ChunkData(Arc::new(chunk))))
-                    .remove::<Generating>();
+                if missing > 0 {
+                    cmds.insert((MissingNeighbors(missing), ChunkData(Arc::new(chunk))))
+                        .remove::<Generating>();
+                } else {
+                    cmds.insert((RequiresMesh, ChunkData(Arc::new(chunk))))
+                        .remove::<Generating>();
+                }
             }
             for entity in surrounded {
                 cmds.get_entity(entity).map(|mut c| {
@@ -158,9 +163,10 @@ fn init_mesh(
 
         let chunk = chunk.clone();
         let task = thread_pool.spawn(async move { chunk.mesh(borders) });
-        cmds.entity(entity)
-            .insert(Meshing(task))
-            .remove::<RequiresMesh>();
+
+        cmds.get_entity(entity).map(|mut cmds| {
+            cmds.insert(Meshing(task)).remove::<RequiresMesh>();
+        });
     });
 }
 
@@ -254,8 +260,12 @@ impl Plugin for WorldPlugin {
                     handle_generation,
                     init_mesh,
                     handle_mesh,
-                    despawn_chunks,
-                    regenerate_chunks,
+                    despawn_chunks
+                        .after(init_generation)
+                        .after(handle_generation)
+                        .after(init_mesh)
+                        .after(handle_mesh),
+                    regenerate_chunks.after(despawn_chunks),
                 )
                     .run_if(in_state(AppState::Running)),
             )

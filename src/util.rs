@@ -103,18 +103,26 @@ impl From<Direction> for Quat {
     }
 }
 
-pub trait RangeExt {
+pub trait RangeExt<T> {
     /// Linear interpolates `t` between `start` and `end`.
-    fn lerp(&self, t: f32) -> f32;
+    fn lerp(&self, t: T) -> T;
     /// Determines where a value lies between `start` and `end`.
-    fn lerp_inv(&self, val: f32) -> f32;
+    fn lerp_inv(&self, val: T) -> T;
 }
 
-impl RangeExt for Range<f32> {
+impl RangeExt<f32> for Range<f32> {
     fn lerp(&self, t: f32) -> f32 {
         self.start + (self.end - self.start) * t
     }
     fn lerp_inv(&self, val: f32) -> f32 {
+        ((val - self.start) / (self.end - self.start)).clamp(0.0, 1.0)
+    }
+}
+impl RangeExt<f64> for Range<f64> {
+    fn lerp(&self, t: f64) -> f64 {
+        self.start + (self.end - self.start) * t
+    }
+    fn lerp_inv(&self, val: f64) -> f64 {
         ((val - self.start) / (self.end - self.start)).clamp(0.0, 1.0)
     }
 }

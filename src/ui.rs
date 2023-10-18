@@ -1,10 +1,6 @@
-use std::time::Duration;
-
 use bevy::diagnostic::{DiagnosticsStore, FrameTimeDiagnosticsPlugin};
 use bevy::prelude::*;
 
-use bevy::time::common_conditions::on_timer;
-use bevy_egui::egui::plot::{Line, Plot, PlotPoints};
 use bevy_egui::egui::{RichText, Slider};
 use bevy_egui::{egui, EguiContexts};
 
@@ -17,54 +13,14 @@ pub struct UIPlugin;
 
 impl Plugin for UIPlugin {
     fn build(&self, app: &mut App) {
-        app.init_resource::<FPSHistory>()
-            .add_systems(
-                Update,
-                fps_history.run_if(on_timer(Duration::from_secs_f32(0.2))),
-            )
-            .add_systems(Update, update.run_if(in_state(AppState::Running)));
-    }
-}
-
-#[derive(Default, Resource)]
-pub struct FPSHistory {
-    values: [f64; Self::N],
-    index: usize,
-}
-
-impl FPSHistory {
-    const N: usize = 16;
-
-    fn add(&mut self, value: f64) {
-        self.values[self.index] = value;
-        self.index = (self.index + 1) % Self::N;
-    }
-
-    fn get(&self) -> f64 {
-        self.values[self.index.checked_sub(1).unwrap_or(Self::N - 1)]
-    }
-
-    /// History: oldest -> newest
-    fn iter(&self) -> impl Iterator<Item = f64> + '_ {
-        [&self.values[self.index..], &self.values[..self.index]]
-            .into_iter()
-            .flatten()
-            .copied()
-    }
-}
-
-pub fn fps_history(mut fps_history: ResMut<FPSHistory>, diagnostics: Res<DiagnosticsStore>) {
-    if let Some(fps) = diagnostics.get(FrameTimeDiagnosticsPlugin::FPS) {
-        if let Some(avg) = fps.average() {
-            fps_history.add(avg);
-        }
+        app.add_systems(Update, update.run_if(in_state(AppState::Running)));
     }
 }
 
 /// UI update function
 pub fn update(
     mut egui_context: EguiContexts,
-    fps: Res<FPSHistory>,
+    diagnostics: Res<DiagnosticsStore>,
     mut player_settings: ResMut<PlayerSettings>,
     mut materials: ResMut<Assets<StandardMaterial>>,
     mut noise: ResMut<WorldGen>,
@@ -75,22 +31,11 @@ pub fn update(
     let (p_movement, p_transform) = player_controller.single();
 
     egui::Window::new("Settings").show(egui_context.ctx_mut(), |ui| {
-        ui.label(format!("FPS: {:.3}", fps.get()));
-
-        let measurements = fps
-            .iter()
-            .enumerate()
-            .map(|(i, value)| [-(i as f64), value]);
-
-        let line = Line::new(PlotPoints::from_iter(measurements));
-
-        let max = fps.iter().reduce(f64::max).unwrap_or_default().max(60.0) + 30.0;
-
-        Plot::new("fps")
-            .view_aspect(4.0)
-            .include_y(0.0)
-            .include_y(max)
-            .show(ui, |plot_ui| plot_ui.line(line));
+        if let Some(fps) = diagnostics.get(FrameTimeDiagnosticsPlugin::FPS) {
+            if let Some(avg) = fps.average() {
+                ui.label(format!("FPS: {avg:.3}"));
+            }
+        }
 
         ui.label(RichText::new("Player Settings").heading());
         ui.add(Slider::new(&mut player_settings.m_speed, 0.0..=50.0).text("M Speed"));
